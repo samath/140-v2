@@ -220,6 +220,7 @@ thread_block (void)
   schedule ();
 }
 
+
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -291,6 +292,7 @@ thread_exit (void)
      when it calls thread_schedule_tail(). */
   intr_disable ();
   list_remove (&thread_current()->allelem);
+  timer_wakeup();
   thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
@@ -309,6 +311,7 @@ thread_yield (void)
   old_level = intr_disable ();
   if (cur != idle_thread) 
     list_push_back (&ready_list, &cur->elem);
+  timer_wakeup();
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);

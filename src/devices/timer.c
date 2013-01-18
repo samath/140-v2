@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <round.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "devices/pit.h"
 #include "threads/interrupt.h"
 #include "threads/synch.h"
@@ -16,6 +17,19 @@
 #if TIMER_FREQ > 1000
 #error TIMER_FREQ <= 1000 recommended
 #endif
+
+
+/* Priority queue for sleeping threads */
+struct thread_sleep_record
+{
+  struct thread *thread;
+  int64_t wakeup;
+  struct thread_sleep_record *next;
+};
+
+static struct thread_sleep_record *next_to_wake = NULL;
+static struct lock sleep_lock;
+
 
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
@@ -37,6 +51,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  lock_init(&sleep_lock);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,12 +104,46 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
+  struct thread_sleep_record *record = malloc(sizeof(struct thread_sleep_record)); 
+  record->thread = thread_current();
+  record->wakeup = timer_ticks() + ticks;
 
+  lock_acquire(&sleep_lock);
+
+  struct thread_sleep_record **cur = &next_to_wake;
+  if (*cur == NULL || (*cur)->wakeup > record->wakeup) {
+    record->next = *cur;
+    next_to_wake = record;
+  } else {
+    for (; (*cur)->next && (*cur)->next->wakeup <= record->wakeup; cur = &((*cur)->next));
+    record->next = (*cur)->next;
+    (*cur)->next = record;
+  }
+    
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+
+  intr_disable();
+  lock_release(&sleep_lock);
+  printf("I am blocking for %d ticks\n", ticks);
+  thread_block();
+  intr_enable();
 }
+
+void
+timer_wakeup () 
+{
+  lock_acquire(&sleep_lock);
+
+  if(next_to_wake && next_to_wake->wakeup <= timer_ticks()) {
+    thread_unblock(next_to_wake->thread);
+    struct thread_sleep_record *temp = next_to_wake;
+    next_to_wake = next_to_wake->next;
+    free(temp);
+  }
+
+  lock_release(&sleep_lock);
+}
+
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */

@@ -28,7 +28,6 @@ struct thread_sleep_record
 };
 
 static struct thread_sleep_record *next_to_wake = NULL;
-static struct lock sleep_lock;
 
 
 /* Number of timer ticks since OS booted. */
@@ -51,7 +50,6 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
-  lock_init(&sleep_lock);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -104,44 +102,49 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
+  intr_disable();
+
   struct thread_sleep_record *record = malloc(sizeof(struct thread_sleep_record)); 
   record->thread = thread_current();
   record->wakeup = timer_ticks() + ticks;
 
-  lock_acquire(&sleep_lock);
+  printf("interrupts disabled for %d\n", record->thread->tid);
+  printf("wakeup at %" PRId64 " now %" PRId64 " sleeping for %" PRId64 "\n", record->wakeup, timer_ticks(), ticks);
 
   struct thread_sleep_record **cur = &next_to_wake;
   if (*cur == NULL || (*cur)->wakeup > record->wakeup) {
     record->next = *cur;
     next_to_wake = record;
   } else {
-    for (; (*cur)->next && (*cur)->next->wakeup <= record->wakeup; cur = &((*cur)->next));
+    for (; (*cur)->next && (*cur)->next->wakeup <= record->wakeup; *cur = ((*cur)->next))
     record->next = (*cur)->next;
     (*cur)->next = record;
   }
-    
-  ASSERT (intr_get_level () == INTR_ON);
 
-  intr_disable();
-  lock_release(&sleep_lock);
-  printf("I am blocking for %d ticks\n", ticks);
+  int pqlen = 0;
+  struct thread_sleep_record *tmp = next_to_wake;
+  for (; tmp != NULL; tmp = tmp->next) {
+    pqlen++;
+    printf("\tpq wakeup %" PRId64 "\n", tmp->wakeup);
+  }
+  printf("pqlen %d\n", pqlen);
+
   thread_block();
+  free(record);
+  printf("interrupts enabled\n");
   intr_enable();
+
 }
 
 void
 timer_wakeup () 
 {
-  lock_acquire(&sleep_lock);
-
-  if(next_to_wake && next_to_wake->wakeup <= timer_ticks()) {
+  //if(next_to_wake) {
+  if (next_to_wake && next_to_wake->wakeup <= timer_ticks()) {
+    printf("hello %" PRId64 " %" PRId64 "\n", next_to_wake->wakeup, timer_ticks());
     thread_unblock(next_to_wake->thread);
-    struct thread_sleep_record *temp = next_to_wake;
     next_to_wake = next_to_wake->next;
-    free(temp);
   }
-
-  lock_release(&sleep_lock);
 }
 
 
@@ -220,6 +223,7 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+  timer_wakeup();
   thread_tick ();
 }
 

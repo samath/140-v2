@@ -108,30 +108,18 @@ timer_sleep (int64_t ticks)
   record->thread = thread_current();
   record->wakeup = timer_ticks() + ticks;
 
-  printf("interrupts disabled for %d\n", record->thread->tid);
-  printf("wakeup at %" PRId64 " now %" PRId64 " sleeping for %" PRId64 "\n", record->wakeup, timer_ticks(), ticks);
-
-  struct thread_sleep_record **cur = &next_to_wake;
-  if (*cur == NULL || (*cur)->wakeup > record->wakeup) {
-    record->next = *cur;
+  struct thread_sleep_record *cur = next_to_wake;
+  if (cur == NULL || cur->wakeup > record->wakeup) {
+    record->next = cur;
     next_to_wake = record;
   } else {
-    for (; (*cur)->next && (*cur)->next->wakeup <= record->wakeup; *cur = ((*cur)->next))
-    record->next = (*cur)->next;
-    (*cur)->next = record;
+    for (; cur->next && cur->next->wakeup <= record->wakeup; cur = cur->next) {}
+    record->next = cur->next;
+    cur->next = record;
   }
-
-  int pqlen = 0;
-  struct thread_sleep_record *tmp = next_to_wake;
-  for (; tmp != NULL; tmp = tmp->next) {
-    pqlen++;
-    printf("\tpq wakeup %" PRId64 "\n", tmp->wakeup);
-  }
-  printf("pqlen %d\n", pqlen);
 
   thread_block();
   free(record);
-  printf("interrupts enabled\n");
   intr_enable();
 
 }
@@ -139,9 +127,7 @@ timer_sleep (int64_t ticks)
 void
 timer_wakeup () 
 {
-  //if(next_to_wake) {
-  if (next_to_wake && next_to_wake->wakeup <= timer_ticks()) {
-    printf("hello %" PRId64 " %" PRId64 "\n", next_to_wake->wakeup, timer_ticks());
+  while (next_to_wake && next_to_wake->wakeup <= timer_ticks()) {
     thread_unblock(next_to_wake->thread);
     next_to_wake = next_to_wake->next;
   }

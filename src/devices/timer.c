@@ -20,14 +20,14 @@
 
 
 /* Priority queue for sleeping threads */
-struct thread_sleep_record
+struct sleep_record
 {
   struct thread *thread;
   int64_t wakeup;
-  struct thread_sleep_record *next;
+  struct sleep_record *next;
 };
 
-static struct thread_sleep_record *next_to_wake = NULL;
+static struct sleep_record *next_to_wake = NULL;
 
 
 /* Number of timer ticks since OS booted. */
@@ -98,17 +98,24 @@ timer_elapsed (int64_t then)
 }
 
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
-   be turned on. */
+   be turned on.
+
+   Implementation details
+   ----------------------
+   To achieve atomicity, we disable interrupts. We then create a sleep_record
+   that stores this thread's wakeup and insert it into a priority queue
+   ordered on wakeup time, then block the thread. */
+
 void
 timer_sleep (int64_t ticks) 
 {
   intr_disable();
 
-  struct thread_sleep_record *record = malloc(sizeof(struct thread_sleep_record)); 
+  struct sleep_record *record = malloc(sizeof(struct sleep_record)); 
   record->thread = thread_current();
   record->wakeup = timer_ticks() + ticks;
 
-  struct thread_sleep_record *cur = next_to_wake;
+  struct sleep_record *cur = next_to_wake;
   if (cur == NULL || cur->wakeup > record->wakeup) {
     record->next = cur;
     next_to_wake = record;
@@ -123,6 +130,14 @@ timer_sleep (int64_t ticks)
   intr_enable();
 
 }
+
+/* Implementation details
+   ----------------------
+   Atomicity is assumed because this is called in an interrupt context. We
+   repeatedly pop from the priority queue all threads that were supposed to
+   wake up on or before the current timer tick, and unblock them. Since
+   free() requires locks that need to be called outside of an interrupt,
+   freeing is left for the sleeping thread to handle. */
 
 void
 timer_wakeup () 

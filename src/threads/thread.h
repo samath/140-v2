@@ -87,7 +87,15 @@ struct thread
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
+
+
+    int base_priority;                  /* Priority. */
+    int eff_priority;                   /* Current donated priority. */ 
+
+    struct donation_receipt *donation_receipts;
+                                        /* List of donated priorities. */
+    struct lock *waiting_for;
+
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
@@ -100,6 +108,23 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+  };
+
+
+/*
+   Struct used in linked list for each thread.
+   Contains information on the thread that has donated priority, 
+     the priority of the thread at the time that it donated,
+     and the lock that the thread is waiting on.
+   These will be sorted based on priority such that the leading
+     element has priority equal to the highest currently donated
+     priority.
+*/
+struct donation_receipt 
+  {
+    struct thread *t;
+    struct lock *lock;
+    struct donation_receipt *next;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -132,6 +157,9 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+
+void thread_add_donation_receipt (struct thread *t, struct lock *lock);
+void thread_delete_donations (struct lock *lock);
 
 int thread_get_nice (void);
 void thread_set_nice (int);

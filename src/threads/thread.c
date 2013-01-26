@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -70,6 +71,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -336,15 +338,43 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  thread_current ()->base_priority = new_priority;
+  if(new_priority > thread_current ()->eff_priority) {
+    thread_current ()->eff_priority = new_priority;
+  }
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  return thread_current ()->eff_priority;
 }
+
+/* Add a donation receipt to the stored list. */
+void thread_add_donation_receipt (struct thread *t, struct lock *lock) 
+{
+  struct thread *donator = thread_current ();
+
+  struct donation_receipt *receipt = malloc(sizeof(struct donation_receipt));
+  receipt->t = donator;
+  receipt->lock = lock;
+
+  struct donation_receipt *cur = t->donation_receipts;
+  if (cur == NULL || cur->t->eff_priority <= donator->eff_priority ) {
+    receipt->next = NULL;
+    t->donation_receipts = receipt;
+  } else {
+    for (; cur->next == NULL && cur->t->eff_priority > donator->eff_priority; cur = cur->next) {}
+    receipt->next = cur->next;
+    cur->next = receipt;
+  }
+
+  if (donator->eff_priority > t->eff_priority) t->eff_priority = donator->eff_priority;
+
+}
+
+/* Remove all donation receipts using a given lock. */
 
 /* Sets the current thread's nice value to NICE. */
 void
@@ -462,12 +492,18 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
+  
+  t->base_priority = priority;
+  t->eff_priority = priority;
+  t->donation_receipts = NULL;
+
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
+  t->waiting_for = NULL;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

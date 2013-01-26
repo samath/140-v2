@@ -30,6 +30,10 @@ bool lock_try_acquire (struct lock *);
 void lock_release (struct lock *);
 bool lock_held_by_current_thread (const struct lock *);
 
+void lock_donate_recursive(struct thread *donator);
+struct donation_receipt* lock_revoke_priority (struct lock * lock);
+int max_priority (int current_max, struct donation_receipt *receipt);
+
 /* Condition variable. */
 struct condition 
   {

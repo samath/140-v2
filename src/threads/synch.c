@@ -112,19 +112,22 @@ sema_up (struct semaphore *sema)
   struct thread *high_thread = NULL;
 
   ASSERT (sema != NULL);
+  ASSERT (&(sema->waiters) != NULL);
 
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) { 
-    struct list_elem *max = list_max(&(sema->waiters), thread_compare_priority, NULL);
+    struct list_elem *max = list_max (&sema->waiters, &thread_compare_priority, NULL);
     high_thread = list_entry (max, struct thread, elem);
 
     list_remove (max);
     thread_unblock (high_thread);
+    //thread_unblock(list_entry(list_pop_front(&sema->waiters),struct thread,elem));
   }
 
   sema->value++;
-  if (high_thread) thread_preempt (high_thread);
   intr_set_level (old_level);
+
+  if (high_thread) thread_preempt (high_thread);
 }
 
 static void sema_test_helper (void *sema_);
@@ -207,10 +210,10 @@ lock_acquire (struct lock *lock)
 
 
   old_level = intr_disable ();
-  if(lock->holder != NULL) {
+  /*if(lock->holder != NULL) {
     thread_current ()->waiting_for = lock;
     lock_donate_recursive (thread_current ());
-  }
+  }*/
   intr_set_level (old_level);
 
 
@@ -269,7 +272,7 @@ lock_release (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
-
+/*
   old_level = intr_disable();
   struct donation_receipt *trash = lock_revoke_priority(lock); 
   intr_set_level(old_level);
@@ -279,6 +282,7 @@ lock_release (struct lock *lock)
     free(trash);
     trash = tmp;
   }
+*/
 
 
   lock->holder = NULL;

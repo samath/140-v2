@@ -309,6 +309,7 @@ thread_preempt (struct thread *t)
 {
   if (t == NULL) return;
   ASSERT (t->status == THREAD_READY);
+
   enum intr_level old_level;
   old_level = intr_disable ();
   if (t->eff_priority > thread_current ()->eff_priority) {
@@ -547,8 +548,8 @@ alloc_frame (struct thread *t, size_t size)
 }
 
 
-int
-thread_compare_priority (struct list_elem *a, struct list_elem *b, void *aux)
+bool
+thread_compare_priority (const struct list_elem *a, const struct list_elem *b, void *aux)
 {
   return list_entry (a, struct thread, elem)->eff_priority <
     list_entry (b, struct thread, elem)->eff_priority; 
@@ -565,23 +566,12 @@ next_thread_to_run (void)
   if (list_empty (&ready_list)) {
     return idle_thread;
   } else {
-    struct list_elem *max = list_max(&ready_list, thread_compare_priority, NULL);
+    struct list_elem *max = list_max (&ready_list, &thread_compare_priority, NULL);
     struct thread *high_thread = list_entry (max, struct thread, elem);
-    /*struct list_elem *high_elem = NULL;
-    struct thread *high_thread = NULL;
-    struct list_elem *cur = list_begin (&ready_list);
-    struct list_elem *tail = list_end (&ready_list);
-
-    for (; cur != tail; cur = list_next (cur)) {
-      struct thread *cur_thread = list_entry (cur, struct thread, elem);
-      if (high_thread == NULL || cur_thread->eff_priority > high_thread->eff_priority ) {
-        high_elem = cur;
-        high_thread = cur_thread;
-      }
-    }*/
 
     list_remove (max);
     return high_thread;
+    //return list_entry(list_pop_front(&ready_list),struct thread,elem);
   }
 }
 

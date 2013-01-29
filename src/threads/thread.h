@@ -149,12 +149,14 @@ tid_t thread_tid (void);
 const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
+void thread_preempt (struct thread *t);
 void thread_yield (void);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
 
+int thread_compare_priority (struct list_elem *a, struct list_elem *b, void *aux);
 int thread_get_priority (void);
 void thread_set_priority (int);
 

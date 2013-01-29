@@ -109,14 +109,21 @@ void
 sema_up (struct semaphore *sema) 
 {
   enum intr_level old_level;
+  struct thread *high_thread = NULL;
 
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+  if (!list_empty (&sema->waiters)) { 
+    struct list_elem *max = list_max(&(sema->waiters), thread_compare_priority, NULL);
+    high_thread = list_entry (max, struct thread, elem);
+
+    list_remove (max);
+    thread_unblock (high_thread);
+  }
+
   sema->value++;
+  if (high_thread) thread_preempt (high_thread);
   intr_set_level (old_level);
 }
 
@@ -192,19 +199,23 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+  enum intr_level old_level;
+
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
-  intr_disable();
+
+  old_level = intr_disable ();
   if(lock->holder != NULL) {
     thread_current ()->waiting_for = lock;
     lock_donate_recursive (thread_current ());
   }
+  intr_set_level (old_level);
 
-  intr_enable();
 
   sema_down (&lock->semaphore);
+  thread_current ()->waiting_for = NULL;
   lock->holder = thread_current ();
 }
 
@@ -219,7 +230,7 @@ lock_donate_recursive (struct thread *donator) {
   struct lock *bottleneck = donator->waiting_for;
   if (bottleneck == NULL || bottleneck->holder == NULL) return;
 
-  struct thread *next = donator->waiting_for->holder;
+  struct thread *next = bottleneck->holder;
   ASSERT(next->tid != thread_current ()->tid);
 
   thread_add_donation_receipt (next, bottleneck);
@@ -254,12 +265,14 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
+  enum intr_level old_level;
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
-  intr_disable();
+
+  old_level = intr_disable();
   struct donation_receipt *trash = lock_revoke_priority(lock); 
-  intr_enable(); 
+  intr_set_level(old_level);
 
   while (trash != NULL) {
     struct donation_receipt *tmp = trash->next; 
@@ -267,14 +280,45 @@ lock_release (struct lock *lock)
     trash = tmp;
   }
 
+
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
 
+struct donation_receipt *lock_revoke_priority (struct lock *lock) {
+  struct thread *donatee = lock->holder;
+  ASSERT(donatee == thread_current ());
+  struct donation_receipt *receipts = donatee->donation_receipts;
+  if(receipts == NULL) return NULL;
 
+  struct donation_receipt *trash = NULL, *prev = NULL, *next = NULL;
+  while(receipts != NULL) {
+    next = receipts->next;
+    if(receipts->lock == lock) {
+      if(prev == NULL) {
+        donatee->donation_receipts = next;
+      } else { 
+        prev->next = next;
+      }
+      receipts->next = trash;
+      trash = receipts;
+    } else {
+      prev = receipts;
+    }
+    receipts = next;
+  }
+
+  donatee->eff_priority = max_priority(donatee->eff_priority, 
+                                       donatee->donation_receipts);
+  return trash;
+}
+
+/*
 struct donation_receipt * lock_revoke_priority (struct lock *lock) {
   struct thread *donatee = lock->holder;
   struct donation_receipt *receipt = donatee->donation_receipts;
+  if(receipt == NULL) return;
+  
   struct donation_receipt *trash = NULL;
   int max_pri = 0;
 
@@ -305,9 +349,11 @@ struct donation_receipt * lock_revoke_priority (struct lock *lock) {
 
   return trash;
 }
+*/
 
 int
 max_priority (int current_max, struct donation_receipt *receipt) {
+  if(receipt == NULL) return current_max;
   int donated_pri = receipt->t->eff_priority;
   return (current_max > donated_pri) ? current_max : donated_pri;
 }

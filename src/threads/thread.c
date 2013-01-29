@@ -202,6 +202,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  thread_preempt (t);
 
   return tid;
 }
@@ -241,6 +242,7 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
+ 
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -299,6 +301,22 @@ thread_exit (void)
   NOT_REACHED ();
 }
 
+
+/* Given a thread t that was recently added to the ready list,
+   immediately yield if t has a higher priority than this thread. */
+void
+thread_preempt (struct thread *t)
+{
+  if (t == NULL) return;
+  ASSERT (t->status == THREAD_READY);
+  enum intr_level old_level;
+  old_level = intr_disable ();
+  if (t->eff_priority > thread_current ()->eff_priority) {
+    thread_yield ();
+  }
+  intr_set_level (old_level);
+}
+
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
 void
@@ -338,10 +356,15 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->base_priority = new_priority;
-  if(new_priority > thread_current ()->eff_priority) {
-    thread_current ()->eff_priority = new_priority;
+  enum intr_level old_level = intr_disable ();
+  struct thread * cur = thread_current ();
+  cur->base_priority = new_priority;
+  if (cur->donation_receipts && cur->donation_receipts->t->eff_priority > cur->base_priority) {
+    cur->eff_priority = cur->donation_receipts->t->eff_priority;
+  } else {
+    cur->eff_priority = new_priority;
   }
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -351,7 +374,11 @@ thread_get_priority (void)
   return thread_current ()->eff_priority;
 }
 
-/* Add a donation receipt to the stored list. */
+/* Add a donation receipt to t's stored list.
+   Should only be called from within lock_donate_recursive in 
+   synch.c with interrupts disabled, so synchronization is 
+   not an issue.
+*/
 void thread_add_donation_receipt (struct thread *t, struct lock *lock) 
 {
   struct thread *donator = thread_current ();
@@ -362,7 +389,7 @@ void thread_add_donation_receipt (struct thread *t, struct lock *lock)
 
   struct donation_receipt *cur = t->donation_receipts;
   if (cur == NULL || cur->t->eff_priority <= donator->eff_priority ) {
-    receipt->next = NULL;
+    receipt->next = cur;
     t->donation_receipts = receipt;
   } else {
     for (; cur->next == NULL && cur->t->eff_priority > donator->eff_priority; cur = cur->next) {}
@@ -519,6 +546,14 @@ alloc_frame (struct thread *t, size_t size)
   return t->stack;
 }
 
+
+int
+thread_compare_priority (struct list_elem *a, struct list_elem *b, void *aux)
+{
+  return list_entry (a, struct thread, elem)->eff_priority <
+    list_entry (b, struct thread, elem)->eff_priority; 
+}
+
 /* Chooses and returns the next thread to be scheduled.  Should
    return a thread from the run queue, unless the run queue is
    empty.  (If the running thread can continue running, then it
@@ -527,10 +562,27 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
+  if (list_empty (&ready_list)) {
     return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  } else {
+    struct list_elem *max = list_max(&ready_list, thread_compare_priority, NULL);
+    struct thread *high_thread = list_entry (max, struct thread, elem);
+    /*struct list_elem *high_elem = NULL;
+    struct thread *high_thread = NULL;
+    struct list_elem *cur = list_begin (&ready_list);
+    struct list_elem *tail = list_end (&ready_list);
+
+    for (; cur != tail; cur = list_next (cur)) {
+      struct thread *cur_thread = list_entry (cur, struct thread, elem);
+      if (high_thread == NULL || cur_thread->eff_priority > high_thread->eff_priority ) {
+        high_elem = cur;
+        high_thread = cur_thread;
+      }
+    }*/
+
+    list_remove (max);
+    return high_thread;
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -604,7 +656,7 @@ schedule (void)
 
 /* Returns a tid to use for a new thread. */
 static tid_t
-allocate_tid (void) 
+allocate_tid (void)
 {
   static tid_t next_tid = 1;
   tid_t tid;
@@ -615,7 +667,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);

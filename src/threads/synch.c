@@ -111,9 +111,6 @@ sema_up (struct semaphore *sema)
   enum intr_level old_level;
   struct thread *high_thread = NULL;
 
-  ASSERT (sema != NULL);
-  ASSERT (&(sema->waiters) != NULL);
-
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) { 
     struct list_elem *max = list_max (&sema->waiters, &thread_compare_priority, NULL);

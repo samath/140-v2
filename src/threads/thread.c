@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "devices/timer.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -60,6 +61,8 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
+static fixed_point load_average;      /* Load average used in mlfqs */
+
 static void kernel_thread (thread_func *, void *aux);
 
 static void idle (void *aux UNUSED);
@@ -72,6 +75,8 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+static void calculate_mlfqs_priority (struct thread *);
+static void calculate_mlfqs_recent_cpu (struct thread *, fixed_point);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -136,9 +141,41 @@ thread_tick (void)
   else
     kernel_ticks++;
 
+  thread_ticks++;
+
+  if (thread_mlfqs)
+    if (t != idle_thread) t->recent_cpu++;
+
+    if (thread_ticks % TIMER_FREQ == 0) {
+      struct list_elem *e;
+
+      /* Calculate load average */
+      int ready_threads = list_size (&ready_list);
+      load_average = fp_divide_int (
+                 fp_add( fp_multiply_int (load_average, 59), ready_threads), 60);
+
+      /* Calculate recent cpu */
+      fixed_point coeff = fp_divide ( 
+                 fp_multiply_int ( load_average, 2), 
+                 fp_add_int ( fp_multiply_int ( load_average, 2), 1));
+
+      for (e = list_head(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+          calculate_mlfqs_recent_cpu (list_entry(e, struct thread, elem), coeff);
+      }
+
+    if (thread_ticks % 4 == 0) {
+      /* Calculate priority */
+      for (e = list_head(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+          calculate_mlfqs_priority (list_entry(e, struct thread, elem));
+      }
+    }
+  }
+
   /* Enforce preemption. */
-  if (++thread_ticks >= TIME_SLICE)
+  if (thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
+
+
 }
 
 /* Prints thread statistics. */
@@ -402,21 +439,48 @@ void thread_add_donation_receipt (struct thread *t, struct lock *lock)
 
 }
 
+//Recalculate recent_cpu for a given thread. Assumes interrupts are disabled.
+void
+calculate_mlfqs_recent_cpu (struct thread * t, fixed_point coeff)
+{
+  t->recent_cpu = fp_add_int (
+                  fp_multiply (t->recent_cpu, coeff), t->nice);
+}
+
+//Recalculate priority for a given thread.  Assumes interrupts are disabled.
+void
+calculate_mlfqs_priority (struct thread * t)
+{
+  int new = PRI_MAX - fp_fixed_point_to_int (
+                          fp_divide_int (t->recent_cpu, 4)) - 2 * t->nice;
+  if(new > PRI_MAX) {
+    t->base_priority = PRI_MAX;
+  } else {
+    t->base_priority = (new < PRI_MIN) ? PRI_MIN : new;
+  }
+}
+
+
 /* Remove all donation receipts using a given lock. */
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) 
+thread_set_nice (int nice)
 {
-  /* Not yet implemented. */
+  ASSERT (thread_mlfqs);
+  enum intr_level old_level = intr_disable();
+  struct thread *cur = thread_current ();
+  cur->nice = nice;
+  calculate_mlfqs_priority(cur);
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  ASSERT (thread_mlfqs);
+  return thread_current ()->nice;
 }
 
 /* Returns 100 times the system load average. */

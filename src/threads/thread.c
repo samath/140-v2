@@ -141,40 +141,41 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-  thread_ticks++;
+  if (thread_mlfqs) {
+    int64_t total_ticks = timer_ticks();
+    if (t != idle_thread) t->recent_cpu = fp_add_int (t->recent_cpu, 1);
+    struct list_elem *e;
 
-  if (thread_mlfqs)
-    if (t != idle_thread) t->recent_cpu++;
-
-    if (thread_ticks % TIMER_FREQ == 0) {
-      struct list_elem *e;
-
+    if (total_ticks % TIMER_FREQ == 0) {
       /* Calculate load average */
       int ready_threads = list_size (&ready_list);
+      if(t != idle_thread) ready_threads++;
       load_average = fp_divide_int (
-                 fp_add( fp_multiply_int (load_average, 59), ready_threads), 60);
+                 fp_add_int( fp_multiply_int (load_average, 59), ready_threads), 60);
 
       /* Calculate recent cpu */
       fixed_point coeff = fp_divide ( 
                  fp_multiply_int ( load_average, 2), 
                  fp_add_int ( fp_multiply_int ( load_average, 2), 1));
 
-      for (e = list_head(&all_list); e != list_tail(&all_list); e = list_next(e)) {
-          calculate_mlfqs_recent_cpu (list_entry(e, struct thread, elem), coeff);
-      }
+      //printf("%d %d %d %d\n", t->tid, ready_threads, list_size (&ready_list), list_size (&all_list));
 
-    if (thread_ticks % 4 == 0) {
+      //for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+      //    calculate_mlfqs_recent_cpu (list_entry(e, struct thread, elem), coeff);
+      //} 
+    }
+   
+    if (total_ticks % 4 == 0) {
       /* Calculate priority */
-      for (e = list_head(&all_list); e != list_tail(&all_list); e = list_next(e)) {
-          calculate_mlfqs_priority (list_entry(e, struct thread, elem));
+      for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+           calculate_mlfqs_priority (list_entry(e, struct thread, elem));
       }
     }
   }
 
   /* Enforce preemption. */
-  if (thread_ticks >= TIME_SLICE)
+  if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
-
 
 }
 
@@ -345,7 +346,6 @@ void
 thread_preempt (struct thread *t)
 {
   if (t == NULL) return;
-  ASSERT (t->status == THREAD_READY);
 
   enum intr_level old_level;
   old_level = intr_disable ();
@@ -458,6 +458,14 @@ calculate_mlfqs_recent_cpu (struct thread * t, fixed_point coeff)
                   fp_multiply (t->recent_cpu, coeff), t->nice);
 }
 
+
+
+/*
+This should DEFINITELY be using eff_priority. 
+But that causes page faults and triple faults and massive failures in mlfqs code.
+I assume it's some weird interaction with a preexisting bug, but I don't know
+where that could be.
+*/
 //Recalculate priority for a given thread.  Assumes interrupts are disabled.
 void
 calculate_mlfqs_priority (struct thread * t)
@@ -465,7 +473,7 @@ calculate_mlfqs_priority (struct thread * t)
   int new = PRI_MAX - fp_fixed_point_to_int (
                           fp_divide_int (t->recent_cpu, 4)) - 2 * t->nice;
   if(new > PRI_MAX) {
-    t->base_priority = PRI_MAX;
+    t->base_priority = PRI_MAX;i //see comment above
   } else {
     t->base_priority = (new < PRI_MIN) ? PRI_MIN : new;
   }
@@ -479,10 +487,10 @@ void
 thread_set_nice (int nice)
 {
   ASSERT (thread_mlfqs);
-  enum intr_level old_level = intr_disable();
+  enum intr_level old_level = intr_disable ();
   struct thread *cur = thread_current ();
   cur->nice = nice;
-  calculate_mlfqs_priority(cur);
+  calculate_mlfqs_priority (cur);
   intr_set_level (old_level);
 }
 
@@ -498,16 +506,14 @@ thread_get_nice (void)
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return fp_fixed_point_to_int (fp_multiply_int (load_average, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return fp_fixed_point_to_int (fp_multiply_int (thread_current ()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -599,6 +605,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->base_priority = priority;
   t->eff_priority = priority;
   t->donation_receipts = NULL;
+
+  t->nice = 0;
 
   t->magic = THREAD_MAGIC;
 

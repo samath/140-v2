@@ -408,9 +408,11 @@ thread_set_priority (int new_priority)
   }
 
   // Yield if there's a higher priority thread 
-  struct thread *highest = next_thread_to_run (); 
-  if (highest != idle && highest != cur)
-    thread_preempt (highest);   
+  if (!list_empty (&ready_list)) {
+    struct list_elem *max = list_max (&ready_list, thread_compare_priority, NULL);
+    struct thread *high_thread = list_entry (max, struct thread, elem);
+    thread_preempt (high_thread);
+  }
 
   intr_set_level (old_level);
 }

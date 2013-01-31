@@ -206,10 +206,10 @@ lock_acquire (struct lock *lock)
 
 
   old_level = intr_disable ();
-  /*if(lock->holder != NULL) {
+  if(lock->holder != NULL) {
     thread_current ()->waiting_for = lock;
     lock_donate_recursive (thread_current ());
-  }*/
+  }
   intr_set_level (old_level);
 
 
@@ -264,11 +264,11 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
-//  enum intr_level old_level;
+  enum intr_level old_level;
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
-/*
+
   old_level = intr_disable();
   struct donation_receipt *trash = lock_revoke_priority(lock); 
   intr_set_level(old_level);
@@ -278,24 +278,26 @@ lock_release (struct lock *lock)
     free(trash);
     trash = tmp;
   }
-*/
-
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
 
-struct donation_receipt *lock_revoke_priority (struct lock *lock) {
+/* Revoke all priorities donated to the lock's holder. This is
+   accomplished by iterating through the donatee's donation_receipts
+   list and removing all of them associated with lock. Also updates
+   donatee's priority as the max of the remaining receipts. */
+struct donation_receipt *
+lock_revoke_priority (struct lock *lock) {
   struct thread *donatee = lock->holder;
-  ASSERT(donatee == thread_current ());
   struct donation_receipt *receipts = donatee->donation_receipts;
-  if(receipts == NULL) return NULL;
+  if (receipts == NULL) return NULL;
 
   struct donation_receipt *trash = NULL, *prev = NULL, *next = NULL;
-  while(receipts != NULL) {
+  while (receipts != NULL) {
     next = receipts->next;
-    if(receipts->lock == lock) {
-      if(prev == NULL) {
+    if (receipts->lock == lock) {
+      if (prev == NULL) {
         donatee->donation_receipts = next;
       } else { 
         prev->next = next;
@@ -308,54 +310,24 @@ struct donation_receipt *lock_revoke_priority (struct lock *lock) {
     receipts = next;
   }
 
-  donatee->eff_priority = max_priority(donatee->eff_priority, 
-                                       donatee->donation_receipts);
+  recompute_priority (donatee);
   return trash;
 }
 
-/*
-struct donation_receipt * lock_revoke_priority (struct lock *lock) {
-  struct thread *donatee = lock->holder;
-  struct donation_receipt *receipt = donatee->donation_receipts;
-  if(receipt == NULL) return;
-  
-  struct donation_receipt *trash = NULL;
-  int max_pri = 0;
-
-
-  if (receipt->lock == lock) {
-    // If the receipt is invalidated by lock release, trash it
-    trash = receipt;
-    receipt = receipt->next;
-    trash->next = NULL;
-  } else {
-    // If the receipt is still valid, recompute the max priority
-    max_pri = max_priority(max_pri, receipt);
-  }
-
-  for (; receipt != NULL; receipt = receipt->next) {
-    struct donation_receipt *next = receipt->next;
-    if (next && next->lock == lock) {
-      struct donation_receipt *tmp = next->next;
-      next->next = trash;
-      trash = next;
-      receipt->next = tmp; 
-    } else {
-      max_pri = max_priority(max_pri, next);
-    }
-  }
-
-  donatee->eff_priority = max_pri; 
-
-  return trash;
-}
-*/
-
+/* Recompute the new effective priority of a thread based on 
+   its donation receipts. If there are no donation receipts, 
+   reset it to the base priority. Otherwise, take the max of
+   its base priority and the largest donation receipt. */
 int
-max_priority (int current_max, struct donation_receipt *receipt) {
-  if(receipt == NULL) return current_max;
-  int donated_pri = receipt->t->eff_priority;
-  return (current_max > donated_pri) ? current_max : donated_pri;
+recompute_priority (struct thread *t) {
+  struct donation_receipt *receipt = t->donation_receipts;
+  if (receipt == NULL) {
+    t->eff_priority = t->base_priority;
+  } else {
+    int donated_priority = receipt->t->eff_priority;
+    t->eff_priority = (t->base_priority > donated_priority) ?
+                      t->base_priority : donated_priority;
+  }
 }
 
 /* Returns true if the current thread holds LOCK, false

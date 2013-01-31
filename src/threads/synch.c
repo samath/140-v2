@@ -199,22 +199,27 @@ void
 lock_acquire (struct lock *lock)
 {
   enum intr_level old_level;
+  bool is_donating = false;
 
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
-
   old_level = intr_disable ();
   if(lock->holder != NULL) {
+    is_donating = true;
     thread_current ()->waiting_for = lock;
     lock_donate_recursive (thread_current ());
   }
   intr_set_level (old_level);
 
-
   sema_down (&lock->semaphore);
-  thread_current ()->waiting_for = NULL;
+
+  // In donating priority, the thread calls malloc which in turn
+  // calls lock_acquire. We don't want malloc to stomp the record
+  // of the lock thread_current is currently waiting for.
+  if (is_donating)
+    thread_current ()->waiting_for = NULL;
   lock->holder = thread_current ();
 }
 

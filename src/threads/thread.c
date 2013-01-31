@@ -395,13 +395,23 @@ void
 thread_set_priority (int new_priority) 
 {
   enum intr_level old_level = intr_disable ();
-  struct thread * cur = thread_current ();
+
+  struct thread *cur = thread_current ();
+  struct donation_receipt *receipts = cur->donation_receipts;
+
+  // Update the effective priority based on donations
   cur->base_priority = new_priority;
-  if (cur->donation_receipts && cur->donation_receipts->t->eff_priority > cur->base_priority) {
-    cur->eff_priority = cur->donation_receipts->t->eff_priority;
+  if (receipts && receipts->t->eff_priority > cur->base_priority) {
+    cur->eff_priority = receipts->t->eff_priority;
   } else {
     cur->eff_priority = new_priority;
   }
+
+  // Yield if there's a higher priority thread 
+  struct thread *highest = next_thread_to_run (); 
+  if (highest != idle && highest != cur)
+    thread_preempt (highest);   
+
   intr_set_level (old_level);
 }
 
@@ -630,12 +640,10 @@ next_thread_to_run (void)
   if (list_empty (&ready_list)) {
     return idle_thread;
   } else {
-    struct list_elem *max = list_max (&ready_list, &thread_compare_priority, NULL);
+    struct list_elem *max = list_max (&ready_list, thread_compare_priority, NULL);
     struct thread *high_thread = list_entry (max, struct thread, elem);
-
     list_remove (max);
     return high_thread;
-    //return list_entry(list_pop_front(&ready_list),struct thread,elem);
   }
 }
 
@@ -705,6 +713,7 @@ schedule (void)
 
   if (cur != next)
     prev = switch_threads (cur, next);
+
   thread_schedule_tail (prev);
 }
 

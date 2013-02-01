@@ -238,7 +238,7 @@ lock_donate_recursive (struct thread *donator) {
   if (lock_held_by_current_thread (bottleneck)) return;
 
   struct thread *next = bottleneck->holder;
-  ASSERT(next->tid != thread_current ()->tid);
+  ASSERT (next->tid != thread_current ()->tid);
 
   thread_add_donation_receipt (next, bottleneck);
   lock_donate_recursive(next);

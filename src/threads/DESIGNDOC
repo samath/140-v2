@@ -1,0 +1,415 @@
+			+--------------------+
+			| CS 140             |
+			| PROJECT 1: THREADS |
+			| DESIGN DOCUMENT    |
+			+--------------------+
+				   
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Sam Keller      <samath@stanford.edu>
+Lawrence Xing   <lxing@stanford.edu>
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Describe briefly which parts of the assignment were implemented by
+>> each member of your team. If some team members contributed significantly
+>> more or less than others (e.g. 2x), indicate that here.
+
+Sam Keller:     Timer, Priority Donation, MLFQS
+Lawrence Xing:  Timer, Priority Scheduling, Priority Donation
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			     ALARM CLOCK
+			     ===========
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+>> Used to create a priority queue of sleeping threads sorted in increasing
+>> order of wakeup time.
+
+struct sleep_record
+  {
+    struct thread *thread;
+    int64_t wakeup;
+    struct sleep_record *next;
+  }
+
+>> Beginning of the sleep_record priority queue.
+static struct sleep_record *next_to_wake = NULL;
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe what happens in a call to timer_sleep(),
+>> including the effects of the timer interrupt handler.
+
+timer_sleep creates a new struct sleep_record for the current thread
+and iterates over the priority queue beginning with next_to_wake to insert 
+itself into the list.  It then blocks the current thread.
+
+On each timer interrupt, there is a call to timer_wakeup, which walks through 
+the linked list to find all threads that have passed their wakeup time. Each
+thread is unblocked, and then is responsible for freeing its own memory.
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+
+When no threads are ready to be woken, the additional work in the timer interrupt
+handler consists of a single check against the leading element of the queue.  
+If a thread is ready, thread_unblock () runs in constant time, and the remainder of 
+the list maintenance is delegated to the sleeping thread.
+
+---- SYNCHRONIZATION ----
+
+>> A4: How are race conditions avoided when multiple threads call
+>> timer_sleep() simultaneously?
+
+The entirety of timer_sleep prior to the blocking has interrupts disabled.  Locking
+the linked list is not possible since the locks can not also be used while waking up 
+threads inside the timer interrupt.
+
+>> A5: How are race conditions avoided when a timer interrupt occurs
+>> during a call to timer_sleep()?
+
+Timer_sleep disables interrupts while updating the linked list, so no timer
+interrupts can occur.
+
+
+
+---- RATIONALE ----
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+Our design optimizes for speed within each timer tick, requiring constant
+time if no threads need to be woken or linear time in the number of threads
+that need to be woken. Most of the work is handled in timer_sleep(), where
+the sleeping thread places itself in the priority queue of blocked threads
+sing a linear-time operation.
+
+The alternative was to have each timer_sleep() haphazardly push itself onto
+the front of the list of sleepers. This would require more computation per
+timer_tick() to search for threads to wake up, which is undesirable since
+timer_tick() occurs much more frequently.
+
+			 PRIORITY SCHEDULING
+			 ===================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+>> Used in storing information about priority donations, including the 
+>> donating thread and the relevant lock held by the current thread.
+
+struct donation_receipt
+  {
+    struct thread *t;
+    struct lock *lock;
+    struct donation_receipt *next;
+  };
+
+CHANGES TO THREAD STRUCT:
+
+Priority:
+>> Priority has been split into two fields; base priority is the native
+>> priority before donation or mlfqs, and eff_priority is seen by the scheduler.
+
+donation_receipts:
+>> Keeps track of all threads that have currently donated priority to the
+>> current thread in a sorted linked list.
+
+waiting_for:
+>> Keeps track of the lock that the thread is blocking on, if one exists, for the
+>> purpose of recursive priority donation.
+
+struct thread
+  {
+    tid_t tid;
+    enum thread_status status;
+    char name[16];
+    uint8_t *stack;
+
+    int base_priority;
+    int eff_priority;
+
+    struct donation_receipt *donation_receipts;
+    struct lock *waiting_for;
+
+    struct list_elem allelem;
+    struct list_elem elem;
+    uint32_t *pagedir;
+    unsigned magic;
+
+    int nice;
+    fixed_point recent_cpu;
+  }
+
+
+
+>> B2: Explain the data structure used to track priority donation.
+>> Use ASCII art to diagram a nested donation.  (Alternately, submit a
+>> .png file.)
+
+Priority donation information is stored with the donatee as a donation_receipt, which
+contains a pointer to the donating thread, a pointer to the lock that the 
+donatee holds that the donater is waiting for (possibly through some
+donation chain), and a pointer to preserve the integrity of the list.
+
+Each thread contains a pointer to a priority queue of these receipts, sorted by 
+the priority bestowed by each receipt. Note that storing a reference to the
+donator in the receipt is sufficient to determine the donated priority. The
+donator's priority shouldn't change during this period because it is blocking.
+
+Priority donation is executed during lock_acquire. The acquiring thread checks
+to see if the lock is held by a thread with lower priority. If it is, the acquring
+thread creates a donation receipt for that thread. To handle nested donation, it
+checks if the donatee was waiting on any locks; if so, it continues donating
+in a recursive fashion.
+
+Whenever a lock is freed, the holder deletes all donation receipts associated
+with the lock and updates its own effective priority. 
+
+As an example, assume we have threads A (priority 30), B (40), C (20), and D (10),
+such that A is waiting on a lock LB held by B, B is waiting on a lock LC held by C, and 
+C is waiting for a lock LD held by D.  We represent donation receipts by pairs (thread, lock), 
+and draw the priority queues in the normal way.
+
+In this current state, nested donation will be represented as follows:
+
+A : no donation receipts
+B : (A, LB)
+C : (B, LC) -> (A, LC)
+D : (B, LD) -> (A, LD) -> (C, LD)
+
+
+---- ALGORITHMS ----
+
+>> B3: How do you ensure that the highest priority thread waiting for
+>> a lock, semaphore, or condition variable wakes up first?
+
+All thread wakeups are except cond_signal are implemented by sema_up.
+Therefore, on each call to sema_up, we walk through the sema->waiters list using a call
+to list_max to obtain and unblock the thread with the highest effective priority.
+
+cond_signal is slightly different since condition variables have an additional
+level of indirection. Instead of storing a list of waiters, each condvar stores a list of
+semaphores, where each semaphore has one waiter. This allows easy signalling just by toggling
+the semaphore. To wake up the highest priority thread during cond_signal, we use list_max
+to select the semaphore with the highest priority waiter.
+
+
+>> B4: Describe the sequence of events when a call to lock_acquire()
+>> causes a priority donation.  How is nested donation handled?
+
+lock_acquire temporarily disables interrupts to check if the lock is currently held by 
+another thread.  If so, it follows recursively from waiting thread to lock to holder (repeat)
+to identify which threads it should donte to.  For each thread that it finds, it calls 
+thread_add_donation_receipt.
+
+All of this is handled by the top-level donating thread, since intermediate threads
+are by nature of the donation blocking on some other lock.
+
+
+>> B5: Describe the sequence of events when lock_release() is called
+>> on a lock that a higher-priority thread is waiting for.
+
+lock_release follows the linked list of donation receipts of the holder, and moves each entry 
+that references the releasing lock into a disposal queue, piecing the rest of the list together 
+along the way. The releasing thread also updates its own effective priority as the max of
+its own base priority and the donated priority of all remaining receipts in the list.
+After completion, it frees all unneeded memory with interrupts enabled.
+
+---- SYNCHRONIZATION ----
+
+>> B6: Describe a potential race in thread_set_priority() and explain
+>> how your implementation avoids it.  Can you use a lock to avoid
+>> this race?
+
+With priority donation, consider a case in which a thread with no donations tries to set its 
+own priority.  With the present implementation, if a thread with higher priority donates to
+the current thread after the current thread compares its base priority with the empty 
+donation list, it would overwrite the effect of the donation.
+
+It would be possible to use a lock to avoid the race.  However, we know that the current thread 
+is the only thread to call set_priority, and most other interactions with the priority are handled
+with interrupts disabled.  Therefore, it is more effective to simply disable interrupts for the 
+duration of the operation.  This is especially true since set_priority is also responsible for 
+yielding control in certain situations.
+
+---- RATIONALE ----
+
+>> B7: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+The nature of the priority donations makes this a simple and efficient solution for two reasons.
+First, because priority donation can occur frequently in many different scenarios, our decision
+to leave the ready list as is rather than maintain a sorted queue reduces the overhead on each call.
+Since a thread can easily track its own priority, which can only be modified in a small number of ways,
+there are far fewer edge cases to worry about.
+
+The design of the donation receipts allows all required operations (insertion, removal) to occur in 
+linear time and efficient constant time recalculation of priority, without requiring any upkeep as 
+the threads are modified.
+
+A similar linear-time lookup strategy is used in implementing priority wakeup for synchronization 
+primitives. Once again, this simplifies all other priority-base operations compared to a sorted design, 
+since the waiting list never needs to be actively modified to maintain consistency with thread state.
+
+Memory-wise, we use very little overhead to keep track of the tree of lock dependencies. Locks already
+keep track of their holders, and we simply use one field for threads to keep track of which locks they're
+waiting for. This allows a thread to determine all threads that need to unblock for it to acquire a
+single lock. This is much easier than maintaining a separate data structure of dependencies, both because
+it is more coherent with the existing code and uses less space.
+
+Keeping the various lists unsorted and iterating through them during scheduling has one final benefit:
+it makes round-robin trivial. Since each yielding thread is inserted at the back and list_max returns
+the first max instance, thread run order is round-robin without any additional bookkeeping. This
+is much easier than the alternative of maintaining 64 priority queues for each priority level.
+
+
+
+			  ADVANCED SCHEDULER
+			  ==================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+>> Fixed point is used to implement the floating point calculations 
+>> described in the assignment handout.
+typedef int fixed_point;
+
+nice, recent_cpu (new elements in thread struct):
+>> Stores the thread-specific nice and recent_cpu values for use by the 
+>> mlfqs scheduler.
+
+>> Keep track of the global load average for use by the mlfqs scheduler.
+static fixed_point load_average;
+
+---- ALGORITHMS ----
+
+>> C2: Suppose threads A, B, and C have nice values 0, 1, and 2.  Each
+>> has a recent_cpu value of 0.  Fill in the table below showing the
+>> scheduling decision and the priority and recent_cpu values for each
+>> thread after each given number of timer ticks:
+
+timer  recent_cpu    priority   thread
+ticks   A   B   C   A   B   C   to run
+-----  --  --  --  --  --  --   ------
+ 0      0   0   0  63  61  59      A
+ 4      4   0   0  62  61  59      A
+ 8      8   0   0  61  61  59      B
+12      8   4   0  61  60  59      A
+16     12   4   0  60  60  59      B
+20     12   8   0  60  59  59      A
+24     16   8   0  59  59  59      C
+28     16   8   4  59  59  58      B
+32     16   12  4  59  58  58      A
+36     20   12  4  58  58  58      C
+
+>> C3: Did any ambiguities in the scheduler specification make values
+>> in the table uncertain?  If so, what rule did you use to resolve
+>> them?  Does this match the behavior of your scheduler?
+
+The scheduler does not specify with thread should be selected if two threads 
+suddenly have the same priority.  In these cases, I selected the thread that 
+had been run least recently.  This matches the behavior of our scheduler; 
+because we do not rearrange the ready list, and yielding threads are pushed 
+onto the back, the first thread with the max priority will be selected.
+
+>> C4: How is the way you divided the cost of scheduling between code
+>> inside and outside interrupt context likely to affect performance?
+
+Most of our work is done with interrupts disabled. This is a natural consequence
+of our algorithm of using a single ready list; we can't use a fine-grain
+mutex to lock specific priority queues, as with the 64-queue implementation.
+
+Specifically, the scheduler's computation of next_thread_to_run is run
+with interrupts disabled. Additionally, the entire priority donation algorithm,
+including nested donations, is all called within a single interrupt-disabled
+block.
+
+---- RATIONALE ----
+
+>> C5: Briefly critique your design, pointing out advantages and
+>> disadvantages in your design choices.  If you were to have extra
+>> time to work on this part of the project, how might you choose to
+>> refine or improve your design?
+
+With more time, we would have put more effort into analyzing and determining the 
+most efficient organization of the ready list (as a single queue or several 
+priority queues) and the balance that that carries with priority flexibility.  
+
+We chose an implementation that emphasizes priority over hyper-efficient yielding.
+This approach makes both priority donation and the multi-level feedback queue 
+scheduler more efficient, since priority manipulation is the most important operation.
+It also has the advantage of simplicity, since all information is contained in 
+minimal overhead and with minimal bookkeeping.
+
+One issue with priority donation is the dynamic allocation of donation_receipts.
+This is slow, which is a potential problem since donation occurs with interrupts disabled.
+Ideally we could implement donation with purely static structures, which
+we are fairly confident is possible. We were simply too far in to change this
+design upon recognizing the problem.
+
+Our use of a single ready list that is linearly searched for the highest thread each time
+have the advantage of being simple and round-robin. However, it can incur 
+performance degradation with a large number of threads. If there are many threads
+with evenly distributed priorities, then segregated priority queues is probably
+a superior choice.
+
+>> C6: The assignment explains arithmetic for fixed-point math in
+>> detail, but it leaves it open to you to implement it.  Why did you
+>> decide to implement it the way you did?  If you created an
+>> abstraction layer for fixed-point math, that is, an abstract data
+>> type and/or a set of functions or macros to manipulate fixed-point
+>> numbers, why did you do so?  If not, why not?
+
+I created a layer for fixed-point arithmetic from a typedef'd int and a set of 
+static inline functions that essentially behave as macros.  The fixed-point 
+arithmetic is simple enough that it does not need an extensive library, and
+these were written solely for readability and convenience.
+
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
+
+add some documentation for list_entry

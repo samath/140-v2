@@ -231,6 +231,7 @@ lock_acquire (struct lock *lock)
 */
 void
 lock_donate_recursive (struct thread *donator) {
+  if(thread_mlfqs) return;
   struct lock *bottleneck = donator->waiting_for;
   if (bottleneck == NULL || bottleneck->holder == NULL) return;
 
@@ -294,6 +295,7 @@ lock_release (struct lock *lock)
    donatee's priority as the max of the remaining receipts. */
 struct donation_receipt *
 lock_revoke_priority (struct lock *lock) {
+  if(thread_mlfqs) return NULL;
   struct thread *donatee = lock->holder;
   struct donation_receipt *receipts = donatee->donation_receipts;
   if (receipts == NULL) return NULL;

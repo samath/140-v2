@@ -158,11 +158,9 @@ thread_tick (void)
                  fp_multiply_int ( load_average, 2), 
                  fp_add_int ( fp_multiply_int ( load_average, 2), 1));
 
-      //printf("%d %d %d %d\n", t->tid, ready_threads, list_size (&ready_list), list_size (&all_list));
-
-      //for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+      for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
       //    calculate_mlfqs_recent_cpu (list_entry(e, struct thread, elem), coeff);
-      //} 
+      } 
     }
    
     if (total_ticks % 4 == 0) {
@@ -394,6 +392,7 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  if(thread_mlfqs) return;
   enum intr_level old_level = intr_disable ();
 
   struct thread *cur = thread_current ();
@@ -473,9 +472,9 @@ calculate_mlfqs_priority (struct thread * t)
   int new = PRI_MAX - fp_fixed_point_to_int (
                           fp_divide_int (t->recent_cpu, 4)) - 2 * t->nice;
   if(new > PRI_MAX) {
-    t->base_priority = PRI_MAX;i //see comment above
+    t->eff_priority = PRI_MAX; //see comment above
   } else {
-    t->base_priority = (new < PRI_MIN) ? PRI_MIN : new;
+    t->eff_priority = (new < PRI_MIN) ? PRI_MIN : new;
   }
 }
 
@@ -506,14 +505,22 @@ thread_get_nice (void)
 int
 thread_get_load_avg (void) 
 {
-  return fp_fixed_point_to_int (fp_multiply_int (load_average, 100));
+  ASSERT (thread_mlfqs);
+  enum intr_level old_level = intr_disable ();
+  int avg = fp_fixed_point_to_int (fp_multiply_int (load_average, 100));
+  intr_set_level (old_level);
+  return avg;
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  return fp_fixed_point_to_int (fp_multiply_int (thread_current ()->recent_cpu, 100));
+  ASSERT (thread_mlfqs);
+  enum intr_level old_level = intr_disable();
+  int cpu = fp_fixed_point_to_int (fp_multiply_int (thread_current ()->recent_cpu, 100));
+  intr_set_level (old_level);
+  return cpu;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -607,6 +614,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->donation_receipts = NULL;
 
   t->nice = 0;
+  t->recent_cpu = 0;
 
   t->magic = THREAD_MAGIC;
 

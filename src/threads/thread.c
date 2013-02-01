@@ -142,33 +142,34 @@ thread_tick (void)
     kernel_ticks++;
 
   if (thread_mlfqs) {
-    int64_t total_ticks = timer_ticks();
-    if (t != idle_thread) t->recent_cpu = fp_add_int (t->recent_cpu, 1);
+    int64_t total_ticks = timer_ticks ();
+    if (t != idle_thread)
+      t->recent_cpu = fp_add_int (t->recent_cpu, 1);
     struct list_elem *e;
 
     if (total_ticks % TIMER_FREQ == 0) {
       /* Calculate load average */
       int ready_threads = list_size (&ready_list);
-      if(t != idle_thread) ready_threads++;
+      if (t != idle_thread) ready_threads++;
       load_average = fp_divide_int (
                  fp_add_int( fp_multiply_int (load_average, 59), ready_threads), 60);
 
-      /* Calculate recent cpu */
-      fixed_point coeff = fp_divide ( 
-                 fp_multiply_int ( load_average, 2), 
-                 fp_add_int ( fp_multiply_int ( load_average, 2), 1));
+  //    /* Calculate recent cpu */
+  //    fixed_point coeff = fp_divide ( 
+  //               fp_multiply_int ( load_average, 2), 
+  //               fp_add_int ( fp_multiply_int ( load_average, 2), 1));
 
-      for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
-      //    calculate_mlfqs_recent_cpu (list_entry(e, struct thread, elem), coeff);
-      } 
+  //    for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+  //    //    calculate_mlfqs_recent_cpu (list_entry(e, struct thread, elem), coeff);
+  //    } 
     }
-   
-    if (total_ticks % 4 == 0) {
-      /* Calculate priority */
-      for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
-           calculate_mlfqs_priority (list_entry(e, struct thread, elem));
-      }
-    }
+  // 
+  //  if (total_ticks % 4 == 0) {
+  //    /* Calculate priority */
+  //    for (e = list_front(&all_list); e != list_tail(&all_list); e = list_next(e)) {
+  //         calculate_mlfqs_priority (list_entry(e, struct thread, elem));
+  //    }
+  //  }
   }
 
   /* Enforce preemption. */

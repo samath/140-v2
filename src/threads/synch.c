@@ -206,7 +206,7 @@ lock_acquire (struct lock *lock)
   ASSERT (!lock_held_by_current_thread (lock));
 
   old_level = intr_disable ();
-  if(lock->holder != NULL) {
+  if (lock->holder != NULL) {
     is_donating = true;
     thread_current ()->waiting_for = lock;
     lock_donate_recursive (thread_current ());
@@ -231,9 +231,11 @@ lock_acquire (struct lock *lock)
 */
 void
 lock_donate_recursive (struct thread *donator) {
-  if(thread_mlfqs) return;
+  if (thread_mlfqs) return;
   struct lock *bottleneck = donator->waiting_for;
+
   if (bottleneck == NULL || bottleneck->holder == NULL) return;
+  if (lock_held_by_current_thread (bottleneck)) return;
 
   struct thread *next = bottleneck->holder;
   ASSERT(next->tid != thread_current ()->tid);
@@ -276,15 +278,15 @@ lock_release (struct lock *lock)
 
 
   old_level = intr_disable();
-  struct donation_receipt *trash = lock_revoke_priority(lock); 
-  intr_set_level(old_level);
+  struct donation_receipt *trash = lock_revoke_priority (lock); 
 
   while (trash != NULL) {
     struct donation_receipt *tmp = trash->next; 
-    free(trash);
+    free (trash);
     trash = tmp;
   }
 
+  intr_set_level (old_level);
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
@@ -295,7 +297,7 @@ lock_release (struct lock *lock)
    donatee's priority as the max of the remaining receipts. */
 struct donation_receipt *
 lock_revoke_priority (struct lock *lock) {
-  if(thread_mlfqs) return NULL;
+  if (thread_mlfqs) return NULL;
   struct thread *donatee = lock->holder;
   struct donation_receipt *receipts = donatee->donation_receipts;
   if (receipts == NULL) return NULL;

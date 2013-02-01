@@ -431,6 +431,7 @@ thread_get_priority (void)
 void thread_add_donation_receipt (struct thread *t, struct lock *lock) 
 {
   struct thread *donator = thread_current ();
+  if (donator->eff_priority <= t->eff_priority) return;
 
   struct donation_receipt *receipt = malloc (sizeof (struct donation_receipt));
   receipt->t = donator;
@@ -446,7 +447,7 @@ void thread_add_donation_receipt (struct thread *t, struct lock *lock)
     cur->next = receipt;
   }
 
-  if (donator->eff_priority > t->eff_priority) t->eff_priority = donator->eff_priority;
+  t->eff_priority = donator->eff_priority;
 }
 
 //Recalculate recent_cpu for a given thread. Assumes interrupts are disabled.

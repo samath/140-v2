@@ -100,8 +100,6 @@ timer_elapsed (int64_t then)
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on.
 
-   Implementation details
-   ----------------------
    To achieve atomicity, we disable interrupts. We then create a sleep_record
    that stores this thread's wakeup and insert it into a priority queue
    ordered on wakeup time, then block the thread. */
@@ -109,11 +107,11 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  intr_disable();
+  intr_disable ();
 
-  struct sleep_record *record = malloc(sizeof(struct sleep_record)); 
-  record->thread = thread_current();
-  record->wakeup = timer_ticks() + ticks;
+  struct sleep_record *record = malloc (sizeof (struct sleep_record)); 
+  record->thread = thread_current ();
+  record->wakeup = timer_ticks () + ticks;
 
   struct sleep_record *cur = next_to_wake;
   if (cur == NULL || cur->wakeup > record->wakeup) {
@@ -125,9 +123,9 @@ timer_sleep (int64_t ticks)
     cur->next = record;
   }
 
-  thread_block();
-  free(record);
-  intr_enable();
+  thread_block ();
+  free (record);
+  intr_enable ();
 
 }
 

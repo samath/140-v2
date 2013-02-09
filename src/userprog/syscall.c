@@ -4,6 +4,9 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/file-map.h"
+#include "filesys/file.h"
+
+typedef int pid_t;
 
 static void syscall_handler (struct intr_frame *);
 
@@ -70,12 +73,12 @@ static bool remove (const char *file)
 
 static int open (const char *file)
 {
-  return get_new_fd (fm, file);
+  //NOT YET IMPLEMENTED
 }
 
 static int filesize (int fd)
 {
-  return file_length (fp_from_fd(fd));
+  return file_length (fp_from_fd(fm, fd));
 }
 
 static int read (int fd, void *buffer, unsigned size)
@@ -83,7 +86,7 @@ static int read (int fd, void *buffer, unsigned size)
   return file_read (fp_from_fd(fm, fd), buffer, size);
 }
 
-static int write (int fd, void *buffer, unsigned size)
+static int write (int fd, const void *buffer, unsigned size)
 {
   return file_write (fp_from_fd(fm, fd), buffer, size);
 }

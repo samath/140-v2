@@ -16,5 +16,7 @@ insult
 lineup
 matmult
 recursor
+poop
 *.d
 *.o
+libc.a

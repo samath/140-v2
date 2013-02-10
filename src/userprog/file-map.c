@@ -5,6 +5,7 @@ struct fpm_info {
   struct file *fp;
   int num_active;
   struct fpm_info* next;
+  struct lock file_lock;
 };
 
 struct fdm_info {
@@ -19,8 +20,15 @@ struct file_map {
   int next_fd;
 };
 
-#define FD_TABLE_SIZE 16
-#define FP_TABLE_SIZE 16
+static struct file_with_lock get_file_with_lock (struct fpm_info *fpm) {
+  struct file_with_lock fwl;
+  fwl.fp = fpm->fp;
+  fwl.lock = &fpm->file_lock;
+  return fwl;
+}
+
+#define FD_TABLE_SIZE 32
+#define FP_TABLE_SIZE 32
 #define BASE_FD 2
 
 struct file_map *init_file_map () {
@@ -66,10 +74,14 @@ static struct fpm_info* fpm_from_fp (struct file_map *fm, struct file *fp) {
   return NULL;
 }
   
-struct file* fp_from_fd (struct file_map *fm, int fd) {
+static struct file* fp_from_fd (struct file_map *fm, int fd) {
   struct fdm_info* fdm = fdm_from_fd(fm, fd);
   if(fdm) return fdm->fp;
   else return NULL;
+}
+
+struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) {
+  return get_file_with_lock (fpm_from_fp(fm, fp_from_fd(fm, fd)));
 }
 
 /* Finds the corresponding entry for fp in the fp_map.
@@ -84,6 +96,7 @@ int get_new_fd (struct file_map *fm, struct file *fp) {
     result->fp = fp;
     result->num_active = 0;
     result->next = fm->fp_map[hash(fp)];
+    lock_init (&result->file_lock);
     fm->fp_map[hash(fp)] = result;
   }
 

@@ -9,6 +9,7 @@
 #include "lib/syscall-nr.h"
 #include "devices/shutdown.h"
 #include "threads/synch.h"
+#include "pagedir.h"
 
 static void syscall_handler (struct intr_frame *);
 
@@ -26,6 +27,7 @@ static void syscall_seek (int fd, unsigned position);
 static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
 
+static bool uaddr_valid (void *uptr);
 
 struct file_map *fm;
 struct lock filesys_lock;
@@ -44,9 +46,9 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f) 
 {
-  enum SYSCALL_NUMBER call_number = *(enum SYSCALL_NUMBER *)f->esp;
+  enum SYSCALL_NUMBER call_number = *(enum SYSCALL_NUMBER *) f->esp;
   int retval = 0;
-  switch(call_number) {
+  switch (call_number) {
     case SYS_HALT:
       syscall_halt ();
       break;
@@ -193,3 +195,7 @@ static void syscall_close (int fd)
   close_fd(fm, fd);
 }
 
+
+static bool uaddr_valid (void *uptr) {
+  return pagedir_get_page (thread_current ()->pagedir, uptr) != NULL;
+}

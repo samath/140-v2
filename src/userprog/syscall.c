@@ -10,6 +10,7 @@
 #include "devices/shutdown.h"
 #include "threads/synch.h"
 #include "pagedir.h"
+#include "threads/vaddr.h"
 
 static void syscall_handler (struct intr_frame *);
 
@@ -28,6 +29,7 @@ static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
 
 static bool uaddr_valid (void *uptr);
+static bool buffer_valid (void *buffer, unsigned size);
 
 struct file_map *fm;
 struct lock filesys_lock;
@@ -46,51 +48,114 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f) 
 {
+  if (!uaddr_valid (f) ||
+      !uaddr_valid ((int *)(f->esp))) {
+    syscall_exit (-1);
+    return;
+  }
+  
   enum SYSCALL_NUMBER call_number = *(enum SYSCALL_NUMBER *) f->esp;
   int retval = 0;
+  
   switch (call_number) {
     case SYS_HALT:
       syscall_halt ();
       break;
     case SYS_EXIT:
+      if (!uaddr_valid ((int *)(f->esp) + 1)) {
+        syscall_exit (-1);
+        return;
+      }
       syscall_exit (argval(f, int, 1));
       break;
     case SYS_EXEC:
+      if (!uaddr_valid ((int *)(f->esp) + 1) ||
+          !uaddr_valid (argval(f, char *, 1))) {
+        syscall_exit (-1);
+        return;
+      }
       retval = syscall_exec (argval(f, char *, 1));
       break;
     case SYS_WAIT:
+      if (!uaddr_valid ((int *)(f->esp) + 1)) {
+        syscall_exit (-1);
+        return;
+      }
       retval = syscall_wait (argval(f, int, 1));
       break;
     case SYS_CREATE:
+      if (!uaddr_valid ((int *)(f->esp) + 2) ||
+          !uaddr_valid (argval(f, char *, 1))) {
+        syscall_exit (-1);
+        return;
+      }
       retval = (int) syscall_create (argval(f, char *, 1), 
                                      argval(f, unsigned, 2));
       break;
     case SYS_REMOVE:
+      if (!uaddr_valid ((int *)(f->esp) + 1) ||
+          !uaddr_valid (argval(f, char *, 1))) {
+        syscall_exit (-1);
+        return;
+      }
       retval = (int) syscall_remove (argval(f, char *, 1));
       break;
     case SYS_OPEN:
+      if (!uaddr_valid ((int *)(f->esp) + 1) ||
+          !uaddr_valid (argval(f, char *, 1))) {
+        syscall_exit (-1);
+        return;
+      }
       retval = syscall_open (argval(f, char *, 1));
       break;
     case SYS_FILESIZE:
+      if (!uaddr_valid ((int *)(f->esp) + 1)) {
+        syscall_exit (-1);
+        return;
+      }
       retval = syscall_filesize (argval(f, int, 1));
       break;
     case SYS_READ:
+      if (!uaddr_valid ((int *)(f->esp) + 3) ||
+          !buffer_valid (argval(f, void *, 2), 
+                         argval(f, unsigned, 3))) {
+        syscall_exit (-1);
+        return;
+      }
       retval = syscall_read (argval(f, int, 1),
                              argval(f, void *, 2),
                              argval(f, unsigned, 3));
       break;
     case SYS_WRITE:
+      if (!uaddr_valid ((int *)(f->esp) + 3) ||
+          !buffer_valid (argval(f, void *, 2), 
+                         argval(f, unsigned, 3))) {
+        syscall_exit (-1);
+        return;
+      }
       retval = syscall_write (argval(f, int, 1),
                               argval(f, void *, 2),
                               argval(f, unsigned, 3));
       break;
     case SYS_SEEK:
+      if (!uaddr_valid ((int *)(f->esp) + 2)) {
+        syscall_exit (-1);
+        return;
+      }
       syscall_seek (argval(f, int, 1), argval(f, unsigned, 2));
       break;
     case SYS_TELL:
+      if (!uaddr_valid ((int *)(f->esp) + 1)) {
+        syscall_exit (-1);
+        return;
+      }
       retval = (int) syscall_tell (argval(f, int, 1));
       break;
     case SYS_CLOSE:
+      if (!uaddr_valid ((int *)(f->esp) + 1)) {
+        syscall_exit (-1);
+        return;
+      }
       syscall_close (argval(f, int, 1));
       break;
     default:
@@ -199,3 +264,15 @@ static void syscall_close (int fd)
 static bool uaddr_valid (void *uptr) {
   return pagedir_get_page (thread_current ()->pagedir, uptr) != NULL;
 }
+
+static bool buffer_valid (void *buffer, unsigned size) {
+  if (!uaddr_valid (buffer)) return false;
+  if (size != 0 && uaddr_valid ((char *) buffer + size - 1)) return false;
+  int i = 0;
+  for(; i * PGSIZE < size; i++) {
+    if (!uaddr_valid ((char *) buffer + i * PGSIZE)) return false;
+  }
+  return true;
+}
+
+

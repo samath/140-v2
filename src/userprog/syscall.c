@@ -43,7 +43,7 @@ syscall_init (void)
 }
 
 #define argval(INTR_FRAME, TYPE, ARG)       \
-  (*(( TYPE * ) INTR_FRAME->esp + ARG * sizeof(int)))
+  (*(( TYPE * ) ( INTR_FRAME->esp ) + ARG))
 
 static void
 syscall_handler (struct intr_frame *f) 

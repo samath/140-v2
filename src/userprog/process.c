@@ -14,12 +14,21 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (struct pinfo *pinfo, void (**eip) (void), void **esp);
+
+void
+signal_parent (struct pinfo *pinfo)
+{
+   lock_acquire (&pinfo->child_lock);
+   cond_signal (&pinfo->child_done, &pinfo->child_lock);
+   lock_release (&pinfo->child_lock);
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -28,41 +37,67 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *cmd) 
 {
-  char *cmd_copy;
-  tid_t tid;
+  struct thread *t = thread_current ();
 
-  /* Make a copy of COMMAND.
+  /* Initialize the structure for the child process's information */ 
+  struct pinfo *child = malloc (sizeof (struct pinfo));
+  child->parent = t;
+  child->exec_state = PROCESS_STARTING;
+  child->exit_code = 0;
+  lock_init (&child->child_lock);
+  cond_init (&child->child_done);
+
+  /* Make a copy of CMD.
      Otherwise there's a race between the caller and load(). */
-  cmd_copy = palloc_get_page (0);
-  if (cmd_copy == NULL)
+  child->cmd = palloc_get_page (0);
+  if (child->cmd == NULL)
     return TID_ERROR;
-  strlcpy (cmd_copy, cmd, PGSIZE);
+  strlcpy (child->cmd, cmd, PGSIZE);
+
+  /* Append the child info to this processes list of children */
+  list_push_back (&t->children, &child->elem);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (cmd, PRI_DEFAULT, start_process, cmd_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (cmd_copy); 
+  int tid = thread_create (cmd, PRI_DEFAULT, start_process, child);
+
+  if (tid == TID_ERROR) {
+    palloc_free_page (child->cmd); 
+  } else {
+    /* Wait for the child to finish or fail initialization before proceeding */
+    lock_acquire (&child->child_lock);
+    cond_wait (&child->child_done, &child->child_lock);
+    lock_release (&child->child_lock);
+
+    if (child->exit_code != 0)
+      return -1;
+  }
+
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *cmd_)
+start_process (void *pinfo_)
 {
-  char *cmd = cmd_;
+  struct pinfo *pinfo = pinfo_;
   struct intr_frame if_;
   bool success;
+
+  /* Set pointer to process info for future access. */
+  struct thread *t = thread_current ();
+  t->pinfo = pinfo;
+  pinfo->tid = t->tid; 
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (cmd, &if_.eip, &if_.esp);
+  success = load (pinfo, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (cmd);
+  palloc_free_page (pinfo->cmd);
   if (!success) 
     thread_exit ();
 
@@ -207,7 +242,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *cmd, void (**eip) (void), void **esp) 
+load (struct pinfo *pinfo, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -222,11 +257,13 @@ load (const char *cmd, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
-  /* Parse the executable file name and precompute number of args */
+  /* Parse the executable file name and precompute number of args.
+     Actual parsing is done in setup_stack. */
   int arg_len = 0; // Combined argument length, including null chars. 
   int argc = 0;
   char *token, *save_ptr;
 
+  char *cmd = pinfo->cmd;
   char *cmd_copy = palloc_get_page(0);
   if (cmd_copy == NULL)
     return false;
@@ -246,8 +283,16 @@ load (const char *cmd, void (**eip) (void), void **esp)
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
+      pinfo->exit_code = -1;
+      signal_parent (pinfo);
       goto done; 
     }
+  else
+    {
+      pinfo->exec_state = PROCESS_RUNNING;
+      signal_parent (pinfo);
+    }
+
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr

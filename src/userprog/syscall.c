@@ -257,7 +257,7 @@ static unsigned syscall_tell (int fd)
 
 static void syscall_close (int fd)
 {
-  close_fd(fm, fd);
+  close_fd (fm, fd);
 }
 
 

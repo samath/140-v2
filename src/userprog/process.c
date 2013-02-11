@@ -22,16 +22,19 @@
 static thread_func start_process NO_RETURN;
 static bool load (struct pinfo *pinfo, void (**eip) (void), void **esp);
 
+/* Invoked by a child to signal to its parent that it has changed from
+   STARTING to RUNNING or from RUNNING to DONE. */
 void
 signal_parent (struct pinfo *pinfo)
 {
-   lock_acquire (&pinfo->child_lock);
-   cond_signal (&pinfo->child_done, &pinfo->child_lock);
-   lock_release (&pinfo->child_lock);
+  if (pinfo->parent == NULL) return; 
+  lock_acquire (&pinfo->parent->child_lock);
+  cond_signal (&pinfo->parent->child_done, &pinfo->parent->child_lock);
+  lock_release (&pinfo->parent->child_lock);
 }
 
 /* Starts a new thread running a user program loaded from
-   FILENAME.  The new thread may be scheduled (and may even exit)
+   FILENAME. The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
@@ -44,8 +47,6 @@ process_execute (const char *cmd)
   child->parent = t;
   child->exec_state = PROCESS_STARTING;
   child->exit_code = 0;
-  lock_init (&child->child_lock);
-  cond_init (&child->child_done);
 
   /* Make a copy of CMD.
      Otherwise there's a race between the caller and load(). */
@@ -54,8 +55,10 @@ process_execute (const char *cmd)
     return TID_ERROR;
   strlcpy (child->cmd, cmd, PGSIZE);
 
-  /* Append the child info to this processes list of children */
+  /* Append the child info to this process's list of children */
+  lock_acquire (&cleanup_lock);
   list_push_back (&t->children, &child->elem);
+  lock_release (&cleanup_lock);
 
   /* Create a new thread to execute FILE_NAME. */
   int tid = thread_create (cmd, PRI_DEFAULT, start_process, child);
@@ -64,12 +67,12 @@ process_execute (const char *cmd)
     palloc_free_page (child->cmd); 
   } else {
     /* Wait for the child to finish or fail initialization before proceeding */
-    lock_acquire (&child->child_lock);
-    cond_wait (&child->child_done, &child->child_lock);
-    lock_release (&child->child_lock);
+    lock_acquire (&t->child_lock);
+    cond_wait (&t->child_done, &t->child_lock);
+    lock_release (&t->child_lock);
 
     if (child->exit_code != 0)
-      return -1;
+      return TID_ERROR;
   }
 
   return tid;
@@ -125,6 +128,55 @@ process_wait (tid_t child_tid UNUSED)
 {
   while (1) {}
   return -1;
+}
+
+
+
+
+/* Frees the current process's resources related to keeping track of
+   parent-child dependencies.
+
+   This method is synchronized by cleanup_lock in syscall.c. This (a)
+   prevents interleaving of exit status messages and (b) protects the 
+   the linked list manipulation of children linked lists. 
+
+   The cleanup policy is that parents must clean nodes of dead children.
+   They must update the remaining orphaned children nodes accodingly.
+   Orphaned children must clean up the leftover nodes from their parents.
+*/
+
+void
+process_cleanup (int exit_code)
+{
+  lock_acquire (&cleanup_lock);
+
+  struct thread *t = thread_current ();
+  if (t->pinfo == NULL) return; // The kernel thread has pinfo NULL.
+
+  /* Orphaned child, must clean up leftover from parent */
+  if (t->pinfo->parent == NULL)
+    free (t->pinfo);
+  else 
+    t->pinfo->exec_state = PROCESS_DYING;
+  /* Otherwise, update node to indicate to parent we're dead */
+
+  /* Update all children */ 
+  struct list_elem *e = list_begin (&t->children);
+
+  for (; e != list_end (&t->children);) { 
+    struct pinfo *child = list_entry (e, struct pinfo, elem);
+    e = list_next (e);
+
+    child->parent = NULL; 
+    if (child->exec_state == PROCESS_DYING) 
+      free (child);
+    else 
+      child->exec_state = PROCESS_ORPHANED;
+  }
+
+  t->pinfo->exit_code = exit_code;
+
+  lock_release (&cleanup_lock);
 }
 
 /* Free the current process's resources. */

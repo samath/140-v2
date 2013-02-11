@@ -620,6 +620,9 @@ init_thread (struct thread *t, const char *name, int priority)
   t->recent_cpu = 0;
 
   list_init (&t->children);
+  lock_init (&t->child_lock);
+  cond_init (&t->child_done);
+  t->pinfo = NULL;
 
   t->magic = THREAD_MAGIC;
 
@@ -661,7 +664,7 @@ next_thread_to_run (void)
 {
   if (list_empty (&ready_list)) {
     return idle_thread;
-  } else {
+  } else { 
     struct list_elem *max = list_max (&ready_list, thread_compare_priority, NULL);
     struct thread *high_thread = list_entry (max, struct thread, elem);
     list_remove (max);

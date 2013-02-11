@@ -21,8 +21,8 @@ enum process_status
   {
     PROCESS_STARTING,    /* Loading executable */
     PROCESS_RUNNING,     /* Running */
-    PROCESS_DONE,        /* Completed execution */
-    PROCESS_OPRHANED     /* No more parental responsibilities */
+    PROCESS_DYING,       /* Completed execution */
+    PROCESS_ORPHANED     /* No more parental responsibilities */
   };
 
 /* Thread identifier type.
@@ -119,6 +119,9 @@ struct thread
     
     struct pinfo *pinfo;                /* This thread's process information */
     struct list children;               /* List of child process information */
+
+    struct lock child_lock;              /* Lock for parent-child synchro */
+    struct condition child_done;         /* Condvar for the same */
 #endif
 
     /* Owned by thread.c. */
@@ -130,9 +133,9 @@ struct thread
   };
 
 /*
-  Struct used in linked list for each thread.
+  Process INFOrmation struct used in linked list for each thread.
   Contains information on the thread's child and its execution
-  statuses, used for the syscall wait().
+  statuses, used for the syscalls wait() and exec().
 */    
     
 struct pinfo
@@ -142,9 +145,6 @@ struct pinfo
 
     enum process_status exec_state;      /* State of the process's lifecycle */
     int exit_code;                       /* Exit code */
-
-    struct lock child_lock;              /* Lock for parent-child synchro */
-    struct condition child_done;         /* Condvar for the same */
 
     char *cmd;                           /* Used in process_execute to pass the cmd args to
                                             the thread. It's freed afterwards by the parent,

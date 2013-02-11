@@ -268,7 +268,7 @@ static bool uaddr_valid (void *uptr) {
 static bool buffer_valid (void *buffer, unsigned size) {
   if (!uaddr_valid (buffer)) return false;
   if (size != 0 && uaddr_valid ((char *) buffer + size - 1)) return false;
-  int i = 0;
+  unsigned i = 0;
   for(; i * PGSIZE < size; i++) {
     if (!uaddr_valid ((char *) buffer + i * PGSIZE)) return false;
   }

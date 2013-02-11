@@ -25,7 +25,7 @@ struct file_map {
 static struct file_with_lock get_file_with_lock (struct fpm_info *fpm) {
   struct file_with_lock fwl;
   fwl.fp = fpm->fp;
-  fwl.lock = &fpm->file_lock;
+  fwl.lock = &(fpm->file_lock);
   return fwl;
 }
 
@@ -42,10 +42,30 @@ struct file_map *init_file_map () {
   for(; j < FD_TABLE_SIZE; j++) fm->fd_map[j] = NULL;
   fm->next_fd = BASE_FD;
   lock_init (&(fm->file_map_lock));
+  return fm;
 }
 
 void destroy_file_map (struct file_map *fm) {
-  // NOT YET IMPLEMENTED
+  int i = 0, j = 0;
+  for(; i < FP_TABLE_SIZE; i++) {
+    struct fpm_info *fpm = fm->fp_map[i];
+    while(fpm) {
+      struct fpm_info *next = fpm->next;
+      free(fpm);
+      fpm = next;
+    }
+  }
+  free(fm->fp_map);
+  for(; j < FD_TABLE_SIZE; j++) {
+    struct fdm_info *fdm = fm->fd_map[j];
+    while(fdm) {
+      struct fdm_info *next = fdm->next;
+      free(fdm);
+      fdm = next;
+    }
+  }
+  free(fm->fd_map);
+  free(fm);
 }
 
 
@@ -87,7 +107,13 @@ struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) {
   lock_acquire (&(fm->file_map_lock));
   struct fpm_info *fpm  = fpm_from_fp(fm, fp_from_fd(fm, fd));
   lock_release (&(fm->file_map_lock));
-  return get_file_with_lock (fpm);
+  if (fpm) {
+    return get_file_with_lock (fpm);
+  } else {
+    struct file_with_lock fwl;
+    fwl.fp = NULL; fwl.lock = NULL;
+    return fwl;
+  }
 }
 
 /* Finds the corresponding entry for fp in the fp_map.
@@ -103,7 +129,7 @@ int get_new_fd (struct file_map *fm, struct file *fp) {
     result->fp = fp;
     result->num_active = 0;
     result->next = fm->fp_map[hash(fp)];
-    lock_init (&result->file_lock);
+    lock_init (&(result->file_lock));
     fm->fp_map[hash(fp)] = result;
   }
 
@@ -166,7 +192,6 @@ void close_fd (struct file_map *fm, int fd) {
     } else { 
       while(prev_fpm->next) {
         if(prev_fpm->next == fpm) {
-          fpm = prev_fpm->next;
           prev_fpm->next = fpm->next;
           break;
         }

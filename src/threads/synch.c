@@ -31,6 +31,7 @@
 #include <string.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/malloc.h"
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
@@ -327,7 +328,7 @@ lock_revoke_priority (struct lock *lock) {
    its donation receipts. If there are no donation receipts, 
    reset it to the base priority. Otherwise, take the max of
    its base priority and the largest donation receipt. */
-int
+void
 recompute_priority (struct thread *t) {
   struct donation_receipt *receipt = t->donation_receipts;
   if (receipt == NULL) {

@@ -1,5 +1,6 @@
 #include "userprog/file-map.h"
 #include "filesys/file.h"
+#include "threads/malloc.h"
 
 struct fpm_info {
   struct file *fp;
@@ -18,6 +19,7 @@ struct file_map {
   struct fpm_info ** fp_map;
   struct fdm_info ** fd_map;
   int next_fd;
+  struct lock file_map_lock;
 };
 
 static struct file_with_lock get_file_with_lock (struct fpm_info *fpm) {
@@ -39,6 +41,7 @@ struct file_map *init_file_map () {
   fm->fd_map = malloc(FD_TABLE_SIZE * sizeof(struct fdm_info *));
   for(; j < FD_TABLE_SIZE; j++) fm->fd_map[j] = NULL;
   fm->next_fd = BASE_FD;
+  lock_init (&(fm->file_map_lock));
 }
 
 void destroy_file_map (struct file_map *fm) {
@@ -81,7 +84,10 @@ static struct file* fp_from_fd (struct file_map *fm, int fd) {
 }
 
 struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) {
-  return get_file_with_lock (fpm_from_fp(fm, fp_from_fd(fm, fd)));
+  lock_acquire (&(fm->file_map_lock));
+  struct fpm_info *fpm  = fpm_from_fp(fm, fp_from_fd(fm, fd));
+  lock_release (&(fm->file_map_lock));
+  return get_file_with_lock (fpm);
 }
 
 /* Finds the corresponding entry for fp in the fp_map.
@@ -90,6 +96,7 @@ struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) {
    Returns the new file descriptor.
 */
 int get_new_fd (struct file_map *fm, struct file *fp) {
+  lock_acquire (&(fm->file_map_lock));
   struct fpm_info * result = fpm_from_fp(fm, fp);
   if(result == NULL) {
     result = malloc(sizeof(struct fpm_info));
@@ -110,6 +117,7 @@ int get_new_fd (struct file_map *fm, struct file *fp) {
   fm->fd_map[fd % FD_TABLE_SIZE] = new_fdm;
 
   fm->next_fd++;
+  lock_release (&(fm->file_map_lock));
   return fd;
 }
 
@@ -119,8 +127,12 @@ int get_new_fd (struct file_map *fm, struct file *fp) {
    If num_active is 0, calls file_close on the file pointer.
 */
 void close_fd (struct file_map *fm, int fd) {
+  lock_acquire (&(fm->file_map_lock));
   struct fdm_info *prev = fm->fd_map[fd % FD_TABLE_SIZE], *fdm = NULL;
-  if(prev == NULL) return;
+  if(prev == NULL) {
+    lock_release (&(fm->file_map_lock));
+    return;
+  }
   if(prev->fd == fd) {
     fdm = prev;
     fm->fd_map[fd % FD_TABLE_SIZE] = fdm->next;
@@ -134,13 +146,18 @@ void close_fd (struct file_map *fm, int fd) {
       prev = prev->next;
     }
   }
-  if(fdm == NULL) return;
-
+  if(fdm == NULL) {
+    lock_release (&(fm->file_map_lock));
+    return;
+  }
   struct file* fp = fdm->fp;
   free(fdm);
 
   struct fpm_info *fpm = fpm_from_fp(fm, fp);
-  if(fpm == NULL) return;
+  if(fpm == NULL) {
+    lock_release (&(fm->file_map_lock));
+    return;
+  }
   fpm->num_active--;
   if(fpm->num_active == 0) {
     struct fpm_info *prev_fpm = fm->fp_map[hash(fp)];
@@ -159,5 +176,7 @@ void close_fd (struct file_map *fm, int fd) {
     file_close (fpm->fp);
     free(fpm);
   }
+
+  lock_release (&(fm->file_map_lock));
 }
 

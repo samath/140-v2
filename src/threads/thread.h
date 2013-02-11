@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/fixed-point.h"
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -13,6 +14,15 @@ enum thread_status
     THREAD_READY,       /* Not running but ready to run. */
     THREAD_BLOCKED,     /* Waiting for an event to trigger. */
     THREAD_DYING        /* About to be destroyed. */
+  };
+
+/* States in a process's life cycle. */
+enum process_status
+  {
+    PROCESS_STARTING,    /* Loading executable */
+    PROCESS_RUNNING,     /* Running */
+    PROCESS_DONE,        /* Completed execution */
+    PROCESS_OPRHANED     /* No more parental responsibilities */
   };
 
 /* Thread identifier type.
@@ -106,6 +116,9 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    
+    struct pinfo *pinfo;                /* This thread's process information */
+    struct list children;               /* List of child process information */
 #endif
 
     /* Owned by thread.c. */
@@ -113,9 +126,34 @@ struct thread
 
     /* mlfqs state */
     int nice;                           /* Thread niceness. */
-    fixed_point recent_cpu;                   /* Recent cpu usage */
+    fixed_point recent_cpu;             /* Recent cpu usage */
   };
 
+/*
+  Struct used in linked list for each thread.
+  Contains information on the thread's child and its execution
+  statuses, used for the syscall wait().
+*/    
+    
+struct pinfo
+  {
+    tid_t tid;
+    struct thread *parent;               /* This thread's parent. NULL if the parent exited */
+
+    enum process_status exec_state;      /* State of the process's lifecycle */
+    int exit_code;                       /* Exit code */
+
+    struct lock child_lock;              /* Lock for parent-child synchro */
+    struct condition child_done;         /* Condvar for the same */
+
+    char *cmd;                           /* Used in process_execute to pass the cmd args to
+                                            the thread. It's freed afterwards by the parent,
+                                            so don't use after initialization! */
+
+    struct list_elem elem;               /* List elem */
+  };    
+
+    
 
 /*
    Struct used in linked list for each thread.

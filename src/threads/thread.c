@@ -13,6 +13,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -617,6 +618,8 @@ init_thread (struct thread *t, const char *name, int priority)
 
   t->nice = 0;
   t->recent_cpu = 0;
+
+  list_init (&t->children);
 
   t->magic = THREAD_MAGIC;
 

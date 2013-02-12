@@ -30,8 +30,9 @@ static void syscall_seek (int fd, unsigned position);
 static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
 
+static void *utok_addr (void *uptr);
 static bool uaddr_valid (void *uptr);
-static bool str_valid (char *str);
+static bool str_valid (void *str);
 static bool buffer_valid (void *buffer, unsigned size);
 
 struct file_map *fm;
@@ -52,30 +53,64 @@ syscall_init (void)
 
 #define argval(INTR_FRAME, TYPE, ARG)       \
   (*(( TYPE * ) ((uint32_t *) INTR_FRAME->esp + ARG )))
-  //(*(( TYPE * ) INTR_FRAME->esp + ARG))
+
+static enum SYSCALL_NUMBER syscall_first_call = SYS_HALT;
+static enum SYSCALL_NUMBER syscall_last_call = SYS_CLOSE;
+static int syscall_argc[] =
+  {
+    0,  // Halt
+    1,  // Exit
+    1,  // Exec
+    1,  // Wait
+    2,  // Create
+    1,  // Remove
+    1,  // Open
+    1,  // Filesz
+    3,  // Read
+    3,  // Write
+    2,  // Seek
+    1,  // Tell
+    1   // Close
+  };
 
 static void
 syscall_handler (struct intr_frame *f) 
 {
-  if (//!uaddr_valid (f) ||
-      !uaddr_valid ((int *)(f->esp))) {
+  /* Validate the first addr of the stack frame */
+  if (!uaddr_valid ((uint32_t *)(f->esp))) {
     syscall_exit (-1);
     return;
   }
   
   enum SYSCALL_NUMBER call_number = *(enum SYSCALL_NUMBER *) f->esp;
-  int retval = 0;
+  if (call_number < syscall_first_call || call_number > syscall_last_call) {
+    syscall_exit (-1);
+    return;
+  }
+
+  /* Buffer the arguments for validation */
+  int argc = syscall_argc[call_number];
+  uint32_t argbuf[3];
+
+  int i = 0;
+  for (; i < argc; i++) {
+    /* Validate each argument  */
+    uint32_t *arg_addr = (uint32_t *)(f->esp) + 1 + i;
+    if (!uaddr_valid (arg_addr)) {
+      syscall_exit (-1);
+      return;
+    }
+    argbuf[i] = *arg_addr;
+  }
   
+  int retval = 0;
+
   switch (call_number) {
     case SYS_HALT:
       syscall_halt ();
       break;
     case SYS_EXIT:
-      if (!uaddr_valid ((int *)(f->esp) + 1)) {
-        syscall_exit (-1);
-        return;
-      }
-      syscall_exit (argval(f, int, 1));
+      syscall_exit ((int) argbuf[0]);
       break;
     case SYS_EXEC:
       if (false && !str_valid (argval(f, char *, 0))) {
@@ -85,86 +120,59 @@ syscall_handler (struct intr_frame *f)
       retval = syscall_exec (argval(f, char *, 1));
       break;
     case SYS_WAIT:
-      if (!uaddr_valid ((int *)(f->esp) + 1)) {
-        syscall_exit (-1);
-        return;
-      }
-      retval = syscall_wait (argval(f, int, 1));
+      retval = syscall_wait ((int) argbuf[0]);
       break;
     case SYS_CREATE:
-      if (!uaddr_valid ((int *)(f->esp) + 2) ||
-          !uaddr_valid (argval(f, char *, 1))) {
+      if (!uaddr_valid ((char *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
-      retval = (int) syscall_create (argval(f, char *, 1), 
-                                     argval(f, unsigned, 2));
+      retval = (int) syscall_create ((char *) argbuf[0],
+                                     (unsigned) argbuf[1]);
       break;
     case SYS_REMOVE:
-      if (!uaddr_valid ((int *)(f->esp) + 1) ||
-          !uaddr_valid (argval(f, char *, 1))) {
+      if (!uaddr_valid ((char *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
-      retval = (int) syscall_remove (argval(f, char *, 1));
+      retval = (int) syscall_remove ((char *) argbuf[0]);
       break;
     case SYS_OPEN:
-      if (!uaddr_valid ((int *)(f->esp) + 1) ||
-          !uaddr_valid (argval(f, char *, 1))) {
+      if (!uaddr_valid ((char *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
-      retval = syscall_open (argval(f, char *, 1));
+      retval = (int) syscall_open ((char *) argbuf[0]);
       break;
     case SYS_FILESIZE:
-      if (!uaddr_valid ((int *)(f->esp) + 1)) {
-        syscall_exit (-1);
-        return;
-      }
-      retval = syscall_filesize (argval(f, int, 1));
+      retval = syscall_filesize ((int) argbuf[0]);
       break;
     case SYS_READ:
-      if (!uaddr_valid ((int *)(f->esp) + 3) ||
-          !buffer_valid (argval(f, void *, 2), 
-                         argval(f, unsigned, 3))) {
+      if (!buffer_valid ((void *) argbuf[1], (unsigned) argbuf[2])) {
         syscall_exit (-1);
         return;
       }
-      retval = syscall_read (argval(f, int, 1),
-                             argval(f, void *, 2),
-                             argval(f, unsigned, 3));
+      retval = syscall_read ((int) argbuf[0],
+                             (void *) argbuf[1],
+                             (unsigned) argbuf[2]);
       break;
     case SYS_WRITE:
-      if (!uaddr_valid ((int *)(f->esp) + 3) ||
-          !buffer_valid (argval(f, void *, 2), 
-                         argval(f, unsigned, 3))) {
+      if (!buffer_valid ((void *) argbuf[1], (unsigned) argbuf[2])) {
         syscall_exit (-1);
         return;
       }
-      retval = syscall_write (argval(f, int, 1),
-                              argval(f, void *, 2),
-                              argval(f, unsigned, 3));
+      retval = syscall_write ((int) argbuf[0],
+                             (void *) argbuf[1],
+                             (unsigned) argbuf[2]);
       break;
     case SYS_SEEK:
-      if (!uaddr_valid ((int *)(f->esp) + 2)) {
-        syscall_exit (-1);
-        return;
-      }
-      syscall_seek (argval(f, int, 1), argval(f, unsigned, 2));
+      syscall_seek ((int) argbuf[0], (unsigned) argbuf[1]);
       break;
     case SYS_TELL:
-      if (!uaddr_valid ((int *)(f->esp) + 1)) {
-        syscall_exit (-1);
-        return;
-      }
-      retval = (int) syscall_tell (argval(f, int, 1));
+      retval = (int) syscall_tell ((int) argbuf[0]);
       break;
     case SYS_CLOSE:
-      if (!uaddr_valid ((int *)(f->esp) + 1)) {
-        syscall_exit (-1);
-        return;
-      }
-      syscall_close (argval(f, int, 1));
+      syscall_close ((int) argbuf[0]);
       break;
     default:
       printf("unhandled system call!\n");
@@ -187,9 +195,9 @@ static void syscall_exit (int status)
   thread_exit ();
 }
 
-static pid_t syscall_exec (const char *cmd_line)
+static pid_t syscall_exec (const char *cmd)
 {
-  tid_t tid = process_execute (cmd_line);
+  tid_t tid = process_execute (cmd);
   return (tid == TID_ERROR) ? -1 : tid;
 }
 
@@ -276,7 +284,6 @@ static int syscall_write (int fd, const void *buffer, unsigned size)
     lock_release (fwl.lock);
   }
 
-
   return retval;
 }
 
@@ -328,14 +335,14 @@ static bool uaddr_valid (void *uptr) {
 
 /* Iterates through a string character by character to
    check that all of its memory addresses are valid. */
-static bool str_valid (char *str) {
+static bool str_valid (void *str) {
   char *c;
   while (true) {
     /* Translate the user virtual addr into a kernel virtual addr */
     c = (char *) utok_addr(str);
     if (c == NULL) return false;
     if (*c == '\0') return true;
-    str++;
+    str = ((char *) str) + 1;
   }
 }
 

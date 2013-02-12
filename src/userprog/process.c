@@ -115,8 +115,10 @@ start_process (void *pinfo_)
   palloc_free_page (pinfo->cmd);
 
   /* If load failed, quit. */
-  if (!success) 
+  if (!success) {
+    process_cleanup (-1);
     thread_exit ();
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -157,22 +159,23 @@ process_wait (tid_t child_tid UNUSED)
   /* The child was either terminated or process_wait already ran */
   if (child->exec_state == PROCESS_DYING) return -1;
 
+  /* Wait for the child to complete process_cleanup */
   while (child->exec_state != PROCESS_DYING) {
     lock_acquire (&t->child_lock);
     cond_wait (&t->child_done, &t->child_lock);
     lock_release (&t->child_lock);
   }
 
-  return 0;
+  return child->exit_code;
 }
 
 
-/* Frees the current process's resources related to keeping track of
-   parent-child dependencies.
+/* Frees/updates the current process's resources related to keeping track
+   of parent-child dependencies.
 
    This method is synchronized by cleanup_lock and parent_lock. The first 
    prevents interleaving of exit status messages between dying threads,
-   and the second protects access to list nodes. 
+   and the second handles signalling of a waiting parent.
 
    The cleanup policy is that parents must clean nodes of dead children.
    They must update the remaining orphaned children nodes accodingly.
@@ -191,7 +194,10 @@ process_cleanup (int exit_code)
   if (t->pinfo == NULL) return; 
 
   /* Print exit message. */
-  printf ("%s: exit(%d)\n", t->name, exit_code);
+  printf ("%s: exit(%d) %p\n", t->name, exit_code, &t->pinfo);
+
+  /* Update exit code */
+  t->pinfo->exit_code = exit_code;
 
   /* Orphaned child, must clean up leftover from parent. */
   if (t->pinfo->parent == NULL) {
@@ -215,9 +221,8 @@ process_cleanup (int exit_code)
       child->exec_state = PROCESS_ORPHANED;
   }
 
+  /* Close all files opened by this process */
   file_close (t->pinfo->fp);
-
-  t->pinfo->exit_code = exit_code;
 
   lock_release (&cleanup_lock);
 }

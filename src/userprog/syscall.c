@@ -42,6 +42,10 @@ syscall_init (void)
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
   fm = init_file_map ();
+  if (fm == NULL) {
+    syscall_exit (-1);
+    return;
+  }
   lock_init (&filesys_lock);
   lock_init (&cleanup_lock);
 }
@@ -178,6 +182,7 @@ static void syscall_halt ()
 
 static void syscall_exit (int status)
 {
+  close_fd_for_thread (fm);
   process_cleanup (status);
   thread_exit ();
 }
@@ -213,7 +218,7 @@ static int syscall_open (const char *file)
 {
   lock_acquire (&filesys_lock);
   struct file* fp = filesys_open (file);
-  int retval = get_new_fd (fm, fp);
+  int retval = (fp) ? get_new_fd (fm, fp) : -1;
   lock_release (&filesys_lock);
   return retval;
 }
@@ -221,6 +226,7 @@ static int syscall_open (const char *file)
 static int syscall_filesize (int fd)
 { 
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  if (fwl.lock == NULL) return -1;
   lock_acquire (fwl.lock);
   int retval = file_length (fwl.fp);
   lock_release (fwl.lock);
@@ -229,7 +235,6 @@ static int syscall_filesize (int fd)
 
 static int syscall_read (int fd, void *buffer, unsigned size)
 {
-  printf( "read\n" );
   if (fd == STDIN_FILENO) {
     unsigned int i = 0;
     for (; i < size; i++)
@@ -278,6 +283,10 @@ static int syscall_write (int fd, const void *buffer, unsigned size)
 static void syscall_seek (int fd, unsigned position)
 {
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  if (fwl.lock == NULL) {
+    syscall_exit (-1);
+    return;
+  }
   lock_acquire (fwl.lock);
   file_seek (fwl.fp, position);
   lock_release (fwl.lock);
@@ -286,6 +295,10 @@ static void syscall_seek (int fd, unsigned position)
 static unsigned syscall_tell (int fd) 
 {
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  if (fwl.lock == NULL) {
+    syscall_exit (-1);
+    return 1;
+  }
   lock_acquire (fwl.lock);
   unsigned retval = file_tell (fwl.fp);
   lock_release (fwl.lock);

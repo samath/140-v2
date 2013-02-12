@@ -21,4 +21,7 @@ int get_new_fd (struct file_map *fm, struct file *f);
    If the file has no remaining descriptors, close the file. */
 void close_fd (struct file_map *fm, int fd);
 
+/* Close all file descriptors belonging to current thread. */
+void close_fd_for_thread (struct file_map *fm);
+
 #endif

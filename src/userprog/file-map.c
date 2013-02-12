@@ -1,6 +1,7 @@
 #include "userprog/file-map.h"
 #include "filesys/file.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
 
 struct fpm_info {
   struct file *fp;
@@ -11,6 +12,7 @@ struct fpm_info {
 
 struct fdm_info {
   struct file *fp;
+  tid_t thread_id;
   int fd;
   struct fdm_info *next;
 };
@@ -22,10 +24,22 @@ struct file_map {
   struct lock file_map_lock;
 };
 
+static struct file_with_lock get_file_with_lock (struct fpm_info *fpm);
+static int hash (void *addr);
+static struct fdm_info* fdm_from_fd (struct file_map *fm, int fd);
+static struct fpm_info* fpm_from_fp (struct file_map *fm, struct file *fp);
+static struct file* fp_from_fd (struct file_map *fm, int fd);
+static void free_fdm (struct file_map *fm, struct fdm_info *fdm);
+
 static struct file_with_lock get_file_with_lock (struct fpm_info *fpm) {
   struct file_with_lock fwl;
-  fwl.fp = fpm->fp;
-  fwl.lock = &(fpm->file_lock);
+  if (fpm) {
+    fwl.fp = fpm->fp;
+    fwl.lock = &(fpm->file_lock);
+  } else {
+    fwl.fp = NULL; 
+    fwl.lock = NULL;
+  }
   return fwl;
 }
 
@@ -35,10 +49,18 @@ static struct file_with_lock get_file_with_lock (struct fpm_info *fpm) {
 
 struct file_map *init_file_map () {
   struct file_map *fm = malloc(sizeof(struct file_map));
+  if (fm == NULL) return NULL;
   fm->fp_map = malloc(FP_TABLE_SIZE * sizeof(struct fpm_info *));
+  fm->fd_map = malloc(FD_TABLE_SIZE * sizeof(struct fdm_info *));
+  if (fm->fp_map == NULL || fm->fd_map == NULL) {
+    free(fm->fd_map);
+    free(fm->fp_map);
+    free(fm);
+    return NULL;
+  }
+
   int i = 0, j = 0;
   for(; i < FP_TABLE_SIZE; i++) fm->fp_map[i] = NULL;
-  fm->fd_map = malloc(FD_TABLE_SIZE * sizeof(struct fdm_info *));
   for(; j < FD_TABLE_SIZE; j++) fm->fd_map[j] = NULL;
   fm->next_fd = BASE_FD;
   lock_init (&(fm->file_map_lock));
@@ -82,13 +104,18 @@ static int hash (void * addr) {
 static struct fdm_info* fdm_from_fd (struct file_map *fm, int fd) {
   struct fdm_info * start = fm->fd_map[fd % FD_TABLE_SIZE];
   while(start) {
-    if(start->fd == fd) return start;
+    if(start->fd == fd) {
+      if(start->thread_id == thread_current ()->tid)
+        return start;
+      else return NULL;
+    }
     start = start->next;
   }
   return NULL;
 }
 
 static struct fpm_info* fpm_from_fp (struct file_map *fm, struct file *fp) {
+  if (fp == NULL) return NULL;
   struct fpm_info * start = fm->fp_map[hash(fp)];
   while(start) {
     if(start->fp == fp) return start;
@@ -107,13 +134,7 @@ struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) {
   lock_acquire (&(fm->file_map_lock));
   struct fpm_info *fpm  = fpm_from_fp(fm, fp_from_fd(fm, fd));
   lock_release (&(fm->file_map_lock));
-  if (fpm) {
-    return get_file_with_lock (fpm);
-  } else {
-    struct file_with_lock fwl;
-    fwl.fp = NULL; fwl.lock = NULL;
-    return fwl;
-  }
+  return get_file_with_lock (fpm);
 }
 
 /* Finds the corresponding entry for fp in the fp_map.
@@ -121,11 +142,19 @@ struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) {
    Adds a new fdm_info to the fd_map.
    Returns the new file descriptor.
 */
-int get_new_fd (struct file_map *fm, struct file *fp) {
+int get_new_fd (struct file_map *fm, struct file *fp) { 
+  struct fdm_info * new_fdm = malloc(sizeof(struct fdm_info));
+  if (new_fdm == NULL) return -1;
+
   lock_acquire (&(fm->file_map_lock));
   struct fpm_info * result = fpm_from_fp(fm, fp);
   if(result == NULL) {
     result = malloc(sizeof(struct fpm_info));
+    if (result == NULL) {
+      lock_release (&(fm->file_map_lock));
+      free (new_fdm);
+      return -1;
+    }
     result->fp = fp;
     result->num_active = 0;
     result->next = fm->fp_map[hash(fp)];
@@ -135,10 +164,10 @@ int get_new_fd (struct file_map *fm, struct file *fp) {
 
   result->num_active++;
   int fd = fm->next_fd;
-
-  struct fdm_info * new_fdm = malloc(sizeof(struct fdm_info));
+  
   new_fdm->fp = fp;
   new_fdm->fd = fd;
+  new_fdm->thread_id = thread_current ()->tid;
   new_fdm->next = fm->fd_map[fd % FD_TABLE_SIZE];
   fm->fd_map[fd % FD_TABLE_SIZE] = new_fdm;
 
@@ -160,11 +189,19 @@ void close_fd (struct file_map *fm, int fd) {
     return;
   }
   if(prev->fd == fd) {
+    if(prev->thread_id != thread_current ()->tid) {
+      lock_release (&(fm->file_map_lock));
+      return;
+    }
     fdm = prev;
     fm->fd_map[fd % FD_TABLE_SIZE] = fdm->next;
   } else {    
     while(prev->next) {
       if(prev->next->fd == fd) {
+        if(prev->next->thread_id != thread_current ()->tid) {
+          lock_release (&(fm->file_map_lock));
+          return;
+        }
         fdm = prev->next;
         prev->next = fdm->next;
         break;
@@ -176,6 +213,40 @@ void close_fd (struct file_map *fm, int fd) {
     lock_release (&(fm->file_map_lock));
     return;
   }
+
+  free_fdm (fm, fdm);
+  lock_release (&(fm->file_map_lock));
+}
+
+
+void close_fd_for_thread (struct file_map *fm) {
+  lock_acquire (&(fm->file_map_lock));
+
+  tid_t tid = thread_current ()->tid;
+  int i = 0;
+  for(; i < FD_TABLE_SIZE; i++) {
+    struct fdm_info *prev = fm->fd_map[i], *next = NULL;
+    while (prev && prev->thread_id == tid) {
+      next = prev->next;
+      fm->fd_map[i] = next;
+      free_fdm (fm, prev);
+      prev = next;
+    }    
+    while(next) {
+      if(next->thread_id == tid) {
+        prev->next = next->next;
+        free_fdm (fm, next);
+      } else {
+        prev = next;
+      }
+      next = prev->next;
+    }
+  }
+
+  lock_release (&(fm->file_map_lock));
+}
+
+static void free_fdm (struct file_map *fm, struct fdm_info *fdm) {
   struct file* fp = fdm->fp;
   free(fdm);
 
@@ -201,7 +272,4 @@ void close_fd (struct file_map *fm, int fd) {
     file_close (fpm->fp);
     free(fpm);
   }
-
-  lock_release (&(fm->file_map_lock));
 }
-

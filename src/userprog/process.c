@@ -140,7 +140,7 @@ start_process (void *pinfo_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
   struct thread *t = thread_current ();
   
@@ -149,15 +149,16 @@ process_wait (tid_t child_tid UNUSED)
   struct pinfo *child = NULL;
   for (; e != list_end (&t->children); e = list_next (e)) { 
     struct pinfo *sibling = list_entry (e, struct pinfo, elem);
-    if (sibling->tid == child_tid)
+    if (sibling->tid == child_tid) {
       child = sibling;
+      break;
+    }
   }
 
   /* No child and/or invalid TID */
-  if (child == NULL) return -1;
-
-  /* The child was either terminated or process_wait already ran */
-  if (child->exec_state == PROCESS_DYING) return -1;
+  if (child == NULL) {
+    return -1;
+  }
 
   /* Wait for the child to complete process_cleanup */
   while (child->exec_state != PROCESS_DYING) {
@@ -166,7 +167,9 @@ process_wait (tid_t child_tid UNUSED)
     lock_release (&t->child_lock);
   }
 
-  return child->exit_code;
+  int code = child->exit_code;
+  child->exit_code = -1;
+  return code;
 }
 
 
@@ -194,7 +197,7 @@ process_cleanup (int exit_code)
   if (t->pinfo == NULL) return; 
 
   /* Print exit message. */
-  printf ("%s: exit(%d) %p\n", t->name, exit_code, &t->pinfo);
+  printf ("%s: exit(%d)\n", t->name, exit_code);
 
   /* Update exit code */
   t->pinfo->exit_code = exit_code;

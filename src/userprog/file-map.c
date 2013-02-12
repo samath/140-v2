@@ -76,7 +76,7 @@ static int hash (void * addr) {
   int result = 0, i = 3;
   for(; i >= 0; i--) 
     result = result * PRIME + (int) as_bytes[i];
-  return result;
+  return result % FP_TABLE_SIZE;
 }
 
 static struct fdm_info* fdm_from_fd (struct file_map *fm, int fd) {

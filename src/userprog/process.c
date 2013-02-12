@@ -131,8 +131,6 @@ process_wait (tid_t child_tid UNUSED)
 }
 
 
-
-
 /* Frees the current process's resources related to keeping track of
    parent-child dependencies.
 
@@ -151,7 +149,9 @@ process_cleanup (int exit_code)
   lock_acquire (&cleanup_lock);
 
   struct thread *t = thread_current ();
-  if (t->pinfo == NULL) return; // The kernel thread has pinfo NULL.
+  if (t->pinfo == NULL) return; // Kernel threads have pinfo NULL.
+
+  printf ("%s: exit(%d)\n", t->name, exit_code);
 
   /* Orphaned child, must clean up leftover from parent */
   if (t->pinfo->parent == NULL)
@@ -283,7 +283,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp, const char *cmd, int arg_len, int intargc);
+static bool setup_stack (void **esp, const char *cmd, int arg_len, int argc);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -557,10 +557,13 @@ setup_stack (void **esp, const char *cmd, int arg_len, int argc)
       if (success)
         {
           /* Use two pointers: one to push raw data, one to push arg[v|c] */
-          char *arg_data = PHYS_BASE - arg_len;
+
+          /* Points to base of data */
+          char *arg_data = PHYS_BASE - arg_len; 
           if (arg_len % 4 != 0)
             arg_len += 4 - (arg_len % 4); // word-align
-          uint32_t *arg_ptrs = (uint32_t *)(PHYS_BASE - arg_len - 4 * argc);
+          uint32_t *arg_ptrs = (uint32_t *)(PHYS_BASE - arg_len - 4 - 4*argc);
+          /* Points to argv[0] */
 
           /* Copy the command for strtok_r () */
           char *cmd_copy = palloc_get_page(0);
@@ -568,9 +571,10 @@ setup_stack (void **esp, const char *cmd, int arg_len, int argc)
             return false;
           strlcpy (cmd_copy, cmd, PGSIZE);
 
-          /* Push return address and argc */
-          *(arg_ptrs - 1) = argc;
-          *esp = arg_ptrs - 2;
+          /* Push return address, argv and argc */
+          *(arg_ptrs - 1) = (uint32_t) arg_ptrs;
+          *(arg_ptrs - 2) = argc;
+          *esp = arg_ptrs - 3;
 
           /* Construct the stack */
           char *token, *save_ptr;

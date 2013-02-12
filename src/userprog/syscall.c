@@ -31,7 +31,7 @@ static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
 
 static void *utok_addr (void *uptr);
-static bool uaddr_valid (void *uptr);
+static bool uptr_valid (void *uptr);
 static bool str_valid (void *str);
 static bool buffer_valid (void *buffer, unsigned size);
 
@@ -73,11 +73,13 @@ static int syscall_argc[] =
     1   // Close
   };
 
+#define PTR_SIZE (sizeof(uint32_t *))
+
 static void
 syscall_handler (struct intr_frame *f) 
 {
   /* Validate the first addr of the stack frame */
-  if (!uaddr_valid ((uint32_t *)(f->esp))) {
+  if (!uptr_valid (f->esp)) {
     syscall_exit (-1);
     return;
   }
@@ -96,10 +98,11 @@ syscall_handler (struct intr_frame *f)
   for (; i < argc; i++) {
     /* Validate each argument  */
     uint32_t *arg_addr = (uint32_t *)(f->esp) + 1 + i;
-    if (!uaddr_valid (arg_addr)) {
+    if (!uptr_valid (arg_addr)) {
       syscall_exit (-1);
       return;
     }
+    /* Translate the argument to kernel virtual (== physical) memory */
     argbuf[i] = *(uint32_t *) utok_addr (arg_addr);
   }
   
@@ -123,7 +126,7 @@ syscall_handler (struct intr_frame *f)
       retval = syscall_wait ((int) argbuf[0]);
       break;
     case SYS_CREATE:
-      if (!uaddr_valid ((char *) argbuf[0])) {
+      if (!uptr_valid ((char *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
@@ -131,14 +134,14 @@ syscall_handler (struct intr_frame *f)
                                      (unsigned) argbuf[1]);
       break;
     case SYS_REMOVE:
-      if (!uaddr_valid ((char *) argbuf[0])) {
+      if (!uptr_valid ((char *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
       retval = (int) syscall_remove ((char *) argbuf[0]);
       break;
     case SYS_OPEN:
-      if (!uaddr_valid ((char *) argbuf[0])) {
+      if (!uptr_valid ((char *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
@@ -326,14 +329,14 @@ static void *utok_addr (void *uptr) {
 }
 
 
-/* Checks to see if a user virtual address is valid by (a)
-   checking it's below PHYS_BASE and (b) an entry exists
-   in the page table. */
-static bool uaddr_valid (void *uptr) {
-  return utok_addr (uptr) != NULL;
+/* Checks to see if a user pointer is valid by (a)
+   checking all four bytes are below PHYS_BASE and (b) 
+   an entry exists in the page table. */
+static bool uptr_valid (void *uptr) {
+  return buffer_valid (uptr, sizeof (uint32_t *));
 }
 
-/* Iterates through a string virtual address by character 
+/* Iterates through a string virtual address char by char to
    check that all of its memory addresses are valid. */
 static bool str_valid (void *str) {
   char *c;
@@ -346,17 +349,19 @@ static bool str_valid (void *str) {
   }
 }
 
-/* Iterates through a buffer virtual address by page
-   all of its memory addresses are valid. */
+/* Iterates through a buffer virtual address page by page to check
+   all of its memory addresses are valid. size is in bytes. */
 static bool buffer_valid (void *buffer, unsigned size) {
   /* Check front and end */
-  if (!uaddr_valid (buffer)) return false;
-  if (size != 0 && !uaddr_valid ((char *) buffer + size - 1)) return false;
+  if (utok_addr (buffer) == NULL) return false;
+  if (size != 0 && utok_addr (((char *) buffer) + size - 1) == NULL)
+    return false;
 
   /* Step through page-by-page */
   unsigned i = 0;
   for(; i * PGSIZE < size; i++) {
-    if (!uaddr_valid ((char *) buffer + i * PGSIZE)) return false;
+    if (utok_addr (((char *) buffer) + i * PGSIZE) == NULL)
+      return false;
   }
   return true;
 }

@@ -100,7 +100,7 @@ syscall_handler (struct intr_frame *f)
       syscall_exit (-1);
       return;
     }
-    argbuf[i] = *arg_addr;
+    argbuf[i] = *(uint32_t *) utok_addr (arg_addr);
   }
   
   int retval = 0;
@@ -113,11 +113,11 @@ syscall_handler (struct intr_frame *f)
       syscall_exit ((int) argbuf[0]);
       break;
     case SYS_EXEC:
-      if (false && !str_valid (argval(f, char *, 0))) {
+      if (!str_valid ((void *) argbuf[0])) {
         syscall_exit (-1);
         return;
       }
-      retval = syscall_exec (argval(f, char *, 1));
+      retval = syscall_exec ((char *) argbuf[0]);
       break;
     case SYS_WAIT:
       retval = syscall_wait ((int) argbuf[0]);
@@ -333,7 +333,7 @@ static bool uaddr_valid (void *uptr) {
   return utok_addr (uptr) != NULL;
 }
 
-/* Iterates through a string character by character to
+/* Iterates through a string virtual address by character 
    check that all of its memory addresses are valid. */
 static bool str_valid (void *str) {
   char *c;
@@ -346,7 +346,7 @@ static bool str_valid (void *str) {
   }
 }
 
-/* Iterates through a buffer page-by-page to check that
+/* Iterates through a buffer virtual address by page
    all of its memory addresses are valid. */
 static bool buffer_valid (void *buffer, unsigned size) {
   /* Check front and end */

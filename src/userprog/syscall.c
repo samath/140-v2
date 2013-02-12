@@ -31,6 +31,7 @@ static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
 
 static bool uaddr_valid (void *uptr);
+static bool str_valid (char *str);
 static bool buffer_valid (void *buffer, unsigned size);
 
 struct file_map *fm;
@@ -73,8 +74,7 @@ syscall_handler (struct intr_frame *f)
       syscall_exit (argval(f, int, 1));
       break;
     case SYS_EXEC:
-      if (!uaddr_valid ((int *)(f->esp) + 1) ||
-          !uaddr_valid (argval(f, char *, 1))) {
+      if (false && !str_valid (argval(f, char *, 0))) {
         syscall_exit (-1);
         return;
       }
@@ -298,14 +298,42 @@ static void syscall_close (int fd)
 }
 
 
-static bool uaddr_valid (void *uptr) {
-  return is_user_vaddr (uptr) && 
-         (pagedir_get_page (thread_current ()->pagedir, uptr) != NULL);
+/* Convert a user virtual addr into a kernel virtual addr.
+   Return NULL if the mapping is absent or uaddr is not a user addr. */
+static void *utok_addr (void *uptr) {
+  if (!is_user_vaddr (uptr)) return NULL;
+  return pagedir_get_page (thread_current ()->pagedir, uptr);
 }
 
+
+/* Checks to see if a user virtual address is valid by (a)
+   checking it's below PHYS_BASE and (b) an entry exists
+   in the page table. */
+static bool uaddr_valid (void *uptr) {
+  return utok_addr (uptr) != NULL;
+}
+
+/* Iterates through a string character by character to
+   check that all of its memory addresses are valid. */
+static bool str_valid (char *str) {
+  char *c;
+  while (true) {
+    /* Translate the user virtual addr into a kernel virtual addr */
+    c = (char *) utok_addr(str);
+    if (c == NULL) return false;
+    if (*c == '\0') return true;
+    str++;
+  }
+}
+
+/* Iterates through a buffer page-by-page to check that
+   all of its memory addresses are valid. */
 static bool buffer_valid (void *buffer, unsigned size) {
+  /* Check front and end */
   if (!uaddr_valid (buffer)) return false;
   if (size != 0 && !uaddr_valid ((char *) buffer + size - 1)) return false;
+
+  /* Step through page-by-page */
   unsigned i = 0;
   for(; i * PGSIZE < size; i++) {
     if (!uaddr_valid ((char *) buffer + i * PGSIZE)) return false;

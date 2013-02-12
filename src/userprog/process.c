@@ -27,7 +27,7 @@ static bool load (struct pinfo *pinfo, void (**eip) (void), void **esp);
 void
 signal_parent (struct pinfo *pinfo)
 {
-  if (pinfo->parent == NULL) return; 
+  if (pinfo == NULL || pinfo->parent == NULL) return; 
   lock_acquire (&pinfo->parent->child_lock);
   cond_signal (&pinfo->parent->child_done, &pinfo->parent->child_lock);
   lock_release (&pinfo->parent->child_lock);
@@ -48,32 +48,44 @@ process_execute (const char *cmd)
   child->exec_state = PROCESS_STARTING;
   child->exit_code = 0;
 
-  /* Make a copy of CMD.
+  /* Make a copy of CMD to pass into start_process for parsing.
      Otherwise there's a race between the caller and load(). */
   child->cmd = palloc_get_page (0);
   if (child->cmd == NULL)
     return TID_ERROR;
   strlcpy (child->cmd, cmd, PGSIZE);
 
+  /* Make a copy of the first arg in CMD, used for the thread name */
+  char *arg0 = palloc_get_page (0);
+  if (arg0 == NULL)
+    return TID_ERROR;
+  strlcpy (arg0, cmd, PGSIZE);
+  char *save_ptr;
+  arg0 = strtok_r (arg0, " ", &save_ptr);
+
   /* Append the child info to this process's list of children */
-  lock_acquire (&cleanup_lock);
+  lock_acquire (&t->child_lock);
   list_push_back (&t->children, &child->elem);
-  lock_release (&cleanup_lock);
+  lock_release (&t->child_lock);
 
-  /* Create a new thread to execute FILE_NAME. */
-  int tid = thread_create (cmd, PRI_DEFAULT, start_process, child);
+  /* Create a new thread to execute CMD. */
+  int tid = thread_create (arg0, PRI_DEFAULT, start_process, child);
 
-  if (tid == TID_ERROR) {
-    palloc_free_page (child->cmd); 
-  } else {
+  if (tid != TID_ERROR) {
     /* Wait for the child to finish or fail initialization before proceeding */
-    lock_acquire (&t->child_lock);
-    cond_wait (&t->child_done, &t->child_lock);
-    lock_release (&t->child_lock);
+    while (child->exec_state == PROCESS_STARTING) {
+      lock_acquire (&t->child_lock);
+      cond_wait (&t->child_done, &t->child_lock);
+      lock_release (&t->child_lock);
+    }
 
     if (child->exit_code != 0)
       return TID_ERROR;
+  } else {
+    palloc_free_page (child->cmd);
   }
+
+  palloc_free_page (arg0);
 
   return tid;
 }
@@ -99,8 +111,10 @@ start_process (void *pinfo_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (pinfo, &if_.eip, &if_.esp);
 
-  /* If load failed, quit. */
+  /* Once load has initialized the stack, free the cmd copy */
   palloc_free_page (pinfo->cmd);
+
+  /* If load failed, quit. */
   if (!success) 
     thread_exit ();
 
@@ -126,17 +140,39 @@ start_process (void *pinfo_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while (1) {}
-  return -1;
+  struct thread *t = thread_current ();
+  
+  /* Find the child thread */
+  struct list_elem *e = list_begin (&t->children);
+  struct pinfo *child = NULL;
+  for (; e != list_end (&t->children); e = list_next (e)) { 
+    struct pinfo *sibling = list_entry (e, struct pinfo, elem);
+    if (sibling->tid == child_tid)
+      child = sibling;
+  }
+
+  /* No child and/or invalid TID */
+  if (child == NULL) return -1;
+
+  /* The child was either terminated or process_wait already ran */
+  if (child->exec_state == PROCESS_DYING) return -1;
+
+  while (child->exec_state != PROCESS_DYING) {
+    lock_acquire (&t->child_lock);
+    cond_wait (&t->child_done, &t->child_lock);
+    lock_release (&t->child_lock);
+  }
+
+  return 0;
 }
 
 
 /* Frees the current process's resources related to keeping track of
    parent-child dependencies.
 
-   This method is synchronized by cleanup_lock in syscall.c. This (a)
-   prevents interleaving of exit status messages and (b) protects the 
-   the linked list manipulation of children linked lists. 
+   This method is synchronized by cleanup_lock and parent_lock. The first 
+   prevents interleaving of exit status messages between dying threads,
+   and the second protects access to list nodes. 
 
    The cleanup policy is that parents must clean nodes of dead children.
    They must update the remaining orphaned children nodes accodingly.
@@ -149,20 +185,25 @@ process_cleanup (int exit_code)
   lock_acquire (&cleanup_lock);
 
   struct thread *t = thread_current ();
-  if (t->pinfo == NULL) return; // Kernel threads have pinfo NULL.
 
+  /* Kernel threads have pinfo NULL since pinfo is allocated in
+     process_create. */
+  if (t->pinfo == NULL) return; 
+
+  /* Print exit message. */
   printf ("%s: exit(%d)\n", t->name, exit_code);
 
-  /* Orphaned child, must clean up leftover from parent */
-  if (t->pinfo->parent == NULL)
+  /* Orphaned child, must clean up leftover from parent. */
+  if (t->pinfo->parent == NULL) {
     free (t->pinfo);
-  else 
-    t->pinfo->exec_state = PROCESS_DYING;
   /* Otherwise, update node to indicate to parent we're dead */
+  } else {
+    t->pinfo->exec_state = PROCESS_DYING;
+    signal_parent (t->pinfo);
+  }
 
-  /* Update all children */ 
+  /* Update all children's pinfos */ 
   struct list_elem *e = list_begin (&t->children);
-
   for (; e != list_end (&t->children);) { 
     struct pinfo *child = list_entry (e, struct pinfo, elem);
     e = list_next (e);
@@ -596,9 +637,6 @@ setup_stack (void **esp, const char *cmd, int arg_len, int argc)
               arg_data += token_len;
 
             }
-
-            hex_dump(*esp, *esp, 40, true);
-
         }
       else
         palloc_free_page (kpage);

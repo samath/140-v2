@@ -9,6 +9,7 @@
 #include "filesys/filesys.h"
 #include "lib/syscall-nr.h"
 #include "devices/shutdown.h"
+#include "devices/input.h"
 #include "threads/synch.h"
 #include "pagedir.h"
 #include "threads/vaddr.h"
@@ -166,7 +167,7 @@ syscall_handler (struct intr_frame *f)
       thread_exit();
   }
 
-  *(int *)f->eax = retval;
+  f->eax = retval;
 }
 
 static void syscall_halt ()
@@ -177,26 +178,23 @@ static void syscall_halt ()
 
 static void syscall_exit (int status)
 {
-  printf("exit %d\n", status);
   process_cleanup (status);
   thread_exit ();
 }
 
 static pid_t syscall_exec (const char *cmd_line)
 {
-  printf("exec %s\n", cmd_line);
   tid_t tid = process_execute (cmd_line);
   return (tid == TID_ERROR) ? -1 : tid;
 }
 
 static int syscall_wait (pid_t pid)
 {
-  //NOT YET IMPLEMENTED
+  return process_wait (pid);
 }
 
 static bool syscall_create (const char *file, unsigned initial_size)
 {
-  printf("create %s\n", file);
   lock_acquire (&filesys_lock);
   bool retval = filesys_create (file, initial_size);
   lock_release (&filesys_lock);
@@ -205,7 +203,6 @@ static bool syscall_create (const char *file, unsigned initial_size)
 
 static bool syscall_remove (const char *file)
 {
-  printf("remove %s\n", file);
   lock_acquire (&filesys_lock);
   bool retval = filesys_remove (file);
   lock_release (&filesys_lock);
@@ -214,7 +211,6 @@ static bool syscall_remove (const char *file)
 
 static int syscall_open (const char *file)
 {
-  printf("open %s\n", file);
   lock_acquire (&filesys_lock);
   struct file* fp = filesys_open (file);
   int retval = get_new_fd (fm, fp);
@@ -224,7 +220,6 @@ static int syscall_open (const char *file)
 
 static int syscall_filesize (int fd)
 { 
-  printf("filesz %i\n", fd);
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
   lock_acquire (fwl.lock);
   int retval = file_length (fwl.fp);
@@ -234,27 +229,54 @@ static int syscall_filesize (int fd)
 
 static int syscall_read (int fd, void *buffer, unsigned size)
 {
-  printf("read %i\n", fd);
+  printf( "read\n" );
+  if (fd == STDIN_FILENO) {
+    unsigned int i = 0;
+    for (; i < size; i++)
+      *((char *) buffer + size) = input_getc();
+    return 0;
+  }
+    
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
-  lock_acquire (fwl.lock);
-  int retval = file_read (fwl.fp, buffer, size);
-  lock_release (fwl.lock);
+
+  int retval = -1;
+  if (fwl.fp) {
+    lock_acquire (fwl.lock);
+    retval = file_read (fwl.fp, buffer, size);
+    lock_release (fwl.lock);
+  }
+
   return retval;
 }
 
+#define PUTBUF_MAX 512 // Max number of bytes to write at a time to console
+
 static int syscall_write (int fd, const void *buffer, unsigned size)
 {
-  printf("write %i\n", fd);
+  if (fd == STDOUT_FILENO) { 
+    unsigned offset = 0;
+    for (; offset < size; offset += PUTBUF_MAX) {
+      putbuf (buffer + offset, 
+        (size - offset > PUTBUF_MAX ? PUTBUF_MAX : size - offset));
+    }
+    return 0;
+  }
+
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
-  lock_acquire (fwl.lock);
-  int retval = file_write (fwl.fp, buffer, size);
-  lock_release (fwl.lock);
+
+  int retval = -1;
+  if (fwl.fp) {
+    lock_acquire (fwl.lock);
+    retval = file_write (fwl.fp, buffer, size);
+    lock_release (fwl.lock);
+  }
+
+
   return retval;
 }
 
 static void syscall_seek (int fd, unsigned position)
 {
-  printf("seek %i\n", fd);
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
   lock_acquire (fwl.lock);
   file_seek (fwl.fp, position);
@@ -263,7 +285,6 @@ static void syscall_seek (int fd, unsigned position)
 
 static unsigned syscall_tell (int fd) 
 {
-  printf("tell %i\n", fd);
   struct file_with_lock fwl = fwl_from_fd (fm, fd);
   lock_acquire (fwl.lock);
   unsigned retval = file_tell (fwl.fp);
@@ -273,7 +294,6 @@ static unsigned syscall_tell (int fd)
 
 static void syscall_close (int fd)
 {
-  printf("close %i\n", fd);
   close_fd (fm, fd);
 }
 

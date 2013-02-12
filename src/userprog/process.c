@@ -215,6 +215,8 @@ process_cleanup (int exit_code)
       child->exec_state = PROCESS_ORPHANED;
   }
 
+  file_close (t->pinfo->fp);
+
   t->pinfo->exit_code = exit_code;
 
   lock_release (&cleanup_lock);
@@ -382,6 +384,9 @@ load (struct pinfo *pinfo, void (**eip) (void), void **esp)
     }
   else
     {
+      file_deny_write (file);
+      pinfo->fp = file;
+
       pinfo->exec_state = PROCESS_RUNNING;
       signal_parent (pinfo);
     }
@@ -471,7 +476,6 @@ load (struct pinfo *pinfo, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
   return success;
 }
 

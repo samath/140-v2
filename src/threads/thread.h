@@ -141,13 +141,19 @@ struct thread
 struct pinfo
   {
     tid_t tid;
-    struct thread *parent;               /* This thread's parent. NULL if the parent exited */
-    enum process_status exec_state;      /* State of the process's lifecycle */
+    struct thread *parent;               /* This thread's parent. NULL if 
+                                            the parent exited */
+    enum process_status exec_state;      /* State of process's lifecycle */
     int exit_code;                       /* Exit code */
-    char *cmd;                           /* Used in process_execute to pass the cmd args to
-                                            the thread. It's freed afterwards by the parent,
-                                            so don't use after initialization! */
+    char *cmd;                           /* Used in process_execute to pass
+                                            the cmd args to the thread. It's
+                                            freed afterwards by the parent,
+                                            so don't use after 
+                                            initialization! */
     struct list_elem elem;               /* List elem */
+  
+    struct file *fp;                     /* Used to allow write access 
+                                            on file close. */
   };    
 
     

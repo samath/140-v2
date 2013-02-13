@@ -289,7 +289,6 @@ static void free_fdm (struct file_map *fm, struct fdm_info *fdm)
 
   struct fpm_info *fpm = fpm_from_fp(fm, fp);
   if(fpm == NULL) {
-    lock_release (&(fm->file_map_lock));
     return;
   }
   fpm->num_active--;

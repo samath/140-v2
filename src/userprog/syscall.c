@@ -349,7 +349,7 @@ static void *uptr_valid (void *uptr) {
    have crossed a page boundary, to limit total calls to pagedir_get_page.
 */
 static void *str_valid (void *str) {
-  char *c;
+  char *c = NULL;
   void *retval = NULL;
   while (true) {
     /* Translate the user virtual addr into a kernel virtual addr */

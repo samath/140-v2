@@ -42,6 +42,9 @@ process_execute (const char *cmd)
 {
   struct thread *t = thread_current ();
 
+  if (strlen(cmd) > PGSIZE)
+    return TID_ERROR;
+
   /* Initialize the structure for the child process's information */ 
   struct pinfo *child = malloc (sizeof (struct pinfo));
   child->parent = t;
@@ -80,7 +83,7 @@ process_execute (const char *cmd)
     }
 
     if (child->exit_code == -1)
-      return -1;
+      return TID_ERROR;
   } else {
     palloc_free_page (child->cmd);
   }
@@ -387,15 +390,12 @@ load (struct pinfo *pinfo, void (**eip) (void), void **esp)
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
-      pinfo->exit_code = -1;
-      signal_parent (pinfo);
       goto done; 
     }
   else
     {
       file_deny_write (file);
       pinfo->fp = file;
-
       pinfo->exec_state = PROCESS_RUNNING;
       signal_parent (pinfo);
     }

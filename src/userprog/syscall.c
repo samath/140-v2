@@ -71,8 +71,6 @@ static int syscall_argc[] =
     1   // Close
   };
 
-#define PTR_SIZE (sizeof(uint32_t *))
-
 static void
 syscall_handler (struct intr_frame *f) 
 {

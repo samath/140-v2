@@ -619,6 +619,13 @@ setup_stack (void **esp, const char *cmd, int arg_len, int argc)
           uint32_t *arg_ptrs = (uint32_t *)(PHYS_BASE - arg_len - 4 - 4*argc);
           /* Points to argv[0] */
 
+          /* Stop if the stack would be too large.
+             16 = null arg value, argv pointer, argc, and return addr */
+          if (arg_len + 16 + 4*argc > PGSIZE) {
+            palloc_free_page (kpage);
+            return false;
+          }
+
           /* Copy the command for strtok_r () */
           char *cmd_copy = palloc_get_page(0);
           if (cmd_copy == NULL)
@@ -650,6 +657,8 @@ setup_stack (void **esp, const char *cmd, int arg_len, int argc)
               arg_data += token_len;
 
             }
+
+           palloc_free_page (cmd_copy);
         }
       else
         palloc_free_page (kpage);

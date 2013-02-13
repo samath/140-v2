@@ -311,7 +311,22 @@ of virtual memory must be verified independently.
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
 
-Each process termination passes h
+syscall_wait() simply calls process_wait() defined in process.c.
+
+process_wait() iterates through the children list of the parent
+process to find a child with the requested process id. If the
+child is nonexistent or has an exit_code of -1, indicating
+it was terminated by the system or was marked against double
+waiting (see below), process_wait() returns -1 immediately.
+
+Otherwise, the child is still alive. The process blocks using the
+condition variable child_done nested in a while loop waiting for
+the child to update its exec_state to PROCESS_DYING, at which point
+the child will have update the shared pinfo struct with its exit
+code. If the child has already exited, the wait is skipped entirely.
+The parent then reads this exit code, marks the pinfo struct
+with an exit code of -1 to prevent double waiting, and returns
+the exit code.
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the

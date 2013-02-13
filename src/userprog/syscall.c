@@ -107,6 +107,10 @@ syscall_handler (struct intr_frame *f)
   
   int retval = 0;
 
+  /* Switch based on call_number to delegate to corresponding syscall.
+     Have not implemented several syscalls as of this project. 
+     Use validation methods to check user-provided arguments.
+  */
   switch (call_number) {
     case SYS_HALT:
       syscall_halt ();
@@ -197,6 +201,7 @@ static void syscall_exit (int status)
   thread_exit ();
 }
 
+// Accessible in syscall.h for access to the syscall-handler's file map.
 void syscall_release_files ()
 {
   close_fd_for_thread (fm);
@@ -341,7 +346,10 @@ static void *uptr_valid (void *uptr) {
 }
 
 /* Iterates through a string virtual address char by char to
-   check that all of its memory addresses are valid. */
+   check that all of its memory addresses are valid. 
+   Only updates page conversion for bytes in the argument str that
+   have crossed a page boundary, to limit total calls to pagedir_get_page.
+*/
 static void *str_valid (void *str) {
   char *c;
   void *retval = NULL;
@@ -357,12 +365,15 @@ static void *str_valid (void *str) {
 }
 
 /* Iterates through a buffer virtual address page by page to check
-   all of its memory addresses are valid. size is in bytes. */
+   all of its memory addresses are valid. size is in bytes. 
+   Calculates the maximum user virtual page address, then all pages 
+   in between maximum address and starting address.
+*/
 static void *buffer_valid (void *buffer, unsigned size) {
-  /* Check front and end */
   void *retval = utok_addr (buffer);
   if (retval == NULL) return NULL;
 
+  // Starting address of maximum page read by buffer.
   void * max_addr = (void *)
     ((((unsigned) buffer + size - 1) / PGSIZE) * PGSIZE);
   

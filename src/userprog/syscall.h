@@ -4,6 +4,7 @@
 typedef int pid_t;
 
 void syscall_init (void);
+// Needed for call in exception.c. Wraps access to file map.
 void syscall_release_files (void);
 
 #endif /* userprog/syscall.h */

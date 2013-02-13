@@ -31,9 +31,9 @@ static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
 
 static void *utok_addr (void *uptr);
-static bool uptr_valid (void *uptr);
-static bool str_valid (void *str);
-static bool buffer_valid (void *buffer, unsigned size);
+static void *uptr_valid (void *uptr);
+static void *str_valid (void *str);
+static void *buffer_valid (void *buffer, unsigned size);
 
 struct file_map *fm;
 struct lock filesys_lock;
@@ -51,11 +51,9 @@ syscall_init (void)
   lock_init (&cleanup_lock);
 }
 
-#define argval(INTR_FRAME, TYPE, ARG)       \
-  (*(( TYPE * ) ((uint32_t *) INTR_FRAME->esp + ARG )))
 
 static enum SYSCALL_NUMBER syscall_first_call = SYS_HALT;
-static enum SYSCALL_NUMBER syscall_last_call = SYS_CLOSE;
+static enum SYSCALL_NUMBER syscall_last_call = SYS_INUMBER;
 static int syscall_argc[] =
   {
     0,  // Halt
@@ -79,12 +77,13 @@ static void
 syscall_handler (struct intr_frame *f) 
 {
   /* Validate the first addr of the stack frame */
-  if (!uptr_valid (f->esp)) {
+  void *esp = uptr_valid (f->esp);
+  if (esp == NULL) {
     syscall_exit (-1);
     return;
   }
   
-  enum SYSCALL_NUMBER call_number = *(enum SYSCALL_NUMBER *) f->esp;
+  enum SYSCALL_NUMBER call_number = *(enum SYSCALL_NUMBER *) esp;
   if (call_number < syscall_first_call || call_number > syscall_last_call) {
     syscall_exit (-1);
     return;
@@ -97,13 +96,13 @@ syscall_handler (struct intr_frame *f)
   int i = 0;
   for (; i < argc; i++) {
     /* Validate each argument  */
-    uint32_t *arg_addr = (uint32_t *)(f->esp) + 1 + i;
-    if (!uptr_valid (arg_addr)) {
+    void *vaddr = uptr_valid((uint32_t *) f->esp + 1 + i);
+    if (vaddr == NULL) {
       syscall_exit (-1);
       return;
     }
     /* Translate the argument to kernel virtual (== physical) memory */
-    argbuf[i] = *(uint32_t *) utok_addr (arg_addr);
+    argbuf[i] = *(uint32_t *) vaddr;
   }
   
   int retval = 0;
@@ -116,7 +115,7 @@ syscall_handler (struct intr_frame *f)
       syscall_exit ((int) argbuf[0]);
       break;
     case SYS_EXEC:
-      if (!str_valid ((void *) argbuf[0])) {
+      if (str_valid ((void *) argbuf[0]) == NULL) {
         syscall_exit (-1);
         return;
       }
@@ -126,7 +125,7 @@ syscall_handler (struct intr_frame *f)
       retval = syscall_wait ((int) argbuf[0]);
       break;
     case SYS_CREATE:
-      if (!uptr_valid ((char *) argbuf[0])) {
+      if (str_valid ((char *) argbuf[0]) == NULL) {
         syscall_exit (-1);
         return;
       }
@@ -141,7 +140,7 @@ syscall_handler (struct intr_frame *f)
       retval = (int) syscall_remove ((char *) argbuf[0]);
       break;
     case SYS_OPEN:
-      if (!uptr_valid ((char *) argbuf[0])) {
+      if (str_valid ((char *) argbuf[0]) == NULL) {
         syscall_exit (-1);
         return;
       }
@@ -151,7 +150,7 @@ syscall_handler (struct intr_frame *f)
       retval = syscall_filesize ((int) argbuf[0]);
       break;
     case SYS_READ:
-      if (!buffer_valid ((void *) argbuf[1], (unsigned) argbuf[2])) {
+      if (buffer_valid ((void *) argbuf[1], (unsigned) argbuf[2]) == NULL) {
         syscall_exit (-1);
         return;
       }
@@ -160,7 +159,7 @@ syscall_handler (struct intr_frame *f)
                              (unsigned) argbuf[2]);
       break;
     case SYS_WRITE:
-      if (!buffer_valid ((void *) argbuf[1], (unsigned) argbuf[2])) {
+      if (buffer_valid ((void *) argbuf[1], (unsigned) argbuf[2]) == NULL) {
         syscall_exit (-1);
         return;
       }
@@ -193,9 +192,14 @@ static void syscall_halt ()
 
 static void syscall_exit (int status)
 {
-  close_fd_for_thread (fm);
+  syscall_release_files ();
   process_cleanup (status);
   thread_exit ();
+}
+
+void syscall_release_files ()
+{
+  close_fd_for_thread (fm);
 }
 
 static pid_t syscall_exec (const char *cmd)
@@ -332,38 +336,42 @@ static void *utok_addr (void *uptr) {
 /* Checks to see if a user pointer is valid by (a)
    checking all four bytes are below PHYS_BASE and (b) 
    an entry exists in the page table. */
-static bool uptr_valid (void *uptr) {
+static void *uptr_valid (void *uptr) {
   return buffer_valid (uptr, sizeof (uint32_t *));
 }
 
 /* Iterates through a string virtual address char by char to
    check that all of its memory addresses are valid. */
-static bool str_valid (void *str) {
+static void *str_valid (void *str) {
   char *c;
+  void *retval = NULL;
   while (true) {
     /* Translate the user virtual addr into a kernel virtual addr */
     c = (char *) utok_addr(str);
-    if (c == NULL) return false;
-    if (*c == '\0') return true;
+    if (c == NULL) return NULL;
+    if (retval == NULL) retval = c;
+    if (*c == '\0') return retval;
     str = ((char *) str) + 1;
   }
 }
 
 /* Iterates through a buffer virtual address page by page to check
    all of its memory addresses are valid. size is in bytes. */
-static bool buffer_valid (void *buffer, unsigned size) {
+static void *buffer_valid (void *buffer, unsigned size) {
   /* Check front and end */
-  if (utok_addr (buffer) == NULL) return false;
-  if (size != 0 && utok_addr (((char *) buffer) + size - 1) == NULL)
-    return false;
+  void *retval = utok_addr (buffer);
+  if (retval == NULL || size <= 0) return NULL;
 
+  void * max_addr = (void *)
+    ((((unsigned) buffer + size - 1) / PGSIZE) * PGSIZE);
+  
   /* Step through page-by-page */
   unsigned i = 0;
   for(; i * PGSIZE < size; i++) {
     if (utok_addr (((char *) buffer) + i * PGSIZE) == NULL)
-      return false;
+      return NULL;
   }
-  return true;
+  return retval;
 }
 
 

@@ -8,9 +8,8 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+Sam Keller <samath@stanford.edu>
+Lawrence Xing <lxing@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -21,9 +20,8 @@ FirstName LastName <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-FirstName LastName: contribution
-FirstName LastName: contribution
-FirstName LastName: contribution
+Sam Keller: File syscalls, denying writes, syscall architecture
+Lawrence Xing: Argument Passing, Process control, Safe memory access
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
@@ -61,9 +59,121 @@ FirstName LastName: contribution
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
->> B2: Describe how file descriptors are associated with open files.
+Process_status 
+  enum process_status
+    {
+      PROCESS_STARTING,    /* Loading executable */
+      PROCESS_RUNNING,     /* Running */
+      PROCESS_DYING,       /* Completed execution */
+      PROCESS_ORPHANED     /* No more parental responsibilities */
+    };
+
+  struct thread
+    {
+      ...
+
+      struct pinfo *pinfo;                /* This thread's process information */
+      struct list children;               /* List of child process information */
+      
+      struct lock child_lock;              /* Lock for parent-child synchro */
+      struct condition child_done;         /* Condvar for the same */
+      
+      ...
+    };
+
+  struct pinfo
+    {
+      tid_t tid;
+      struct thread *parent;               /* This thread's parent. NULL if
+                                              the parent exited */
+      enum process_status exec_state;      /* State of process's lifecycle */
+      int exit_code;                       /* Exit code */
+      char *cmd;                           /* Used in process_execute to pass
+                                              the cmd args to the thread. It's
+                                              freed afterwards by the parent,
+                                              so don't use after
+                                              initialization! */
+      struct list_elem elem;               /* List elem */
+  
+      struct file *fp;                     /* Used to allow write access
+                                              on file close. */
+    };
+
+The following 4 structs (file_with_lock, fpm_info, fdm_info, file_map)
+are used to maintain information about currently open files and a mapping
+between file descriptors and the original file pointers.
+
+File_with_lock is used as a return value.  Each file is stored with its own
+lock, and this allows syscall to use file-specific lock.
+
+  struct file_with_lock 
+    {
+      struct file *fp;
+      struct lock *lock;
+    };
+
+Fpm_info stores a file pointer and lock (as in the previous struct) and 
+tracks the count of open file descriptors.
+
+  struct fpm_info 
+    {
+      struct file *fp;
+      int num_active;
+      struct fpm_info* next;
+      struct lock file_lock;
+    };
+
+Fdm_info stores information about a single fd and its associated 
+file pointer, as well as identifying the owning thread. 
+
+  struct fdm_info 
+    {
+      struct file *fp;
+      tid_t thread_id;
+      int fd;
+      struct fdm_info *next;
+    };
+
+The syscall_handler contains a single instance of a file_map, which 
+is used to track all open file pointers and file descriptors.
+
+  struct file_map
+    {
+      struct fpm_info ** fp_map;
+      struct fdm_info ** fd_map;
+      int next_fd;
+      struct lock file_map_lock;
+    };
+
+FD_TABLE_SIZE and FP_TABLE_SIZE define the size of the hash maps used 
+in file_map.  Increasing either value improves performance at the cost of
+higher memory use.
+
+  #define FD_TABLE_SIZE 32
+  #define FP_TABLE_SIZE 32
+  #define BASE_FD 2
+
+
+fm and filesys_lock are managed by the syscall_handler to store and 
+synchronize file accesses.
+  struct file_map *fm;
+  struct lock filesys_lock;
+
+
+
+ B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
+
+The relationship between file descriptors and files is handled in 
+file-map.c and file-map.h, using the structs defined above.
+The system tracks a mapping from descriptors to file pointers and a list
+of open files.
+As a result, file descriptors are unique across the OS.  If a file attempts
+to perform a system call on a file handle that it does not own, this will be
+caught and rejected by the file-map abstraction.
+
+
 
 ---- ALGORITHMS ----
 
@@ -116,8 +226,30 @@ FirstName LastName: contribution
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
+We hid the mapping from files to file descriptors underneath the 
+file-map abstraction.  It is primarily designed for efficiency:
+
+The list of open files and the list of open file descriptors are each
+maintained in separate hash maps, the size of which can be varied 
+based on the expected load on the system and a performance - memory
+overhead tradeoff.  Because the amount of memory held for each is so low,
+it is easy to get high performance even with large number of processes or 
+file descriptors.
+However, because all file information is stored globally, this would
+not be as effective on a multi-threaded machine, when the synchronization
+overhead becomes higher.
+
+The implementation is also simpler because it removes a lot of complexity
+from the processes themselves.  They are never exposed to file pointers, 
+and all of the cleanup (for example, automatically closing files on 
+the death of the thread) can happen without participation from the thread
+or even after its memory has been deallocated.
+
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
+
+We used the default mapping.
+
 
 			   SURVEY QUESTIONS
 			   ================

@@ -78,6 +78,9 @@ process_execute (const char *cmd)
       cond_wait (&t->child_done, &t->child_lock);
       lock_release (&t->child_lock);
     }
+
+    if (child->exit_code == -1)
+      return -1;
   } else {
     palloc_free_page (child->cmd);
   }

@@ -78,9 +78,6 @@ process_execute (const char *cmd)
       cond_wait (&t->child_done, &t->child_lock);
       lock_release (&t->child_lock);
     }
-
-    if (child->exit_code != 0)
-      return TID_ERROR;
   } else {
     palloc_free_page (child->cmd);
   }
@@ -155,8 +152,8 @@ process_wait (tid_t child_tid)
     }
   }
 
-  /* No child and/or invalid TID */
-  if (child == NULL) {
+  /* Either not a child, or wait has already been called on. */
+  if (child == NULL || child->exit_code == -1) {
     return -1;
   }
 
@@ -167,9 +164,10 @@ process_wait (tid_t child_tid)
     lock_release (&t->child_lock);
   }
 
-  int code = child->exit_code;
-  child->exit_code = -1;
-  return code;
+  int exit_code = child->exit_code;
+  child->exit_code = -1; // Invalidate future waits
+
+  return exit_code;
 }
 
 

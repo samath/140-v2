@@ -347,7 +347,8 @@ static void *str_valid (void *str) {
   void *retval = NULL;
   while (true) {
     /* Translate the user virtual addr into a kernel virtual addr */
-    c = (char *) utok_addr(str);
+    c = (retval == NULL || (unsigned) str % PGSIZE == 0) ?
+        ((char *) utok_addr(str)) : c + 1;
     if (c == NULL) return NULL;
     if (retval == NULL) retval = c;
     if (*c == '\0') return retval;
@@ -360,15 +361,14 @@ static void *str_valid (void *str) {
 static void *buffer_valid (void *buffer, unsigned size) {
   /* Check front and end */
   void *retval = utok_addr (buffer);
-  if (retval == NULL || size <= 0) return NULL;
+  if (retval == NULL) return NULL;
 
   void * max_addr = (void *)
     ((((unsigned) buffer + size - 1) / PGSIZE) * PGSIZE);
   
   /* Step through page-by-page */
-  unsigned i = 0;
-  for(; i * PGSIZE < size; i++) {
-    if (utok_addr (((char *) buffer) + i * PGSIZE) == NULL)
+  for(; max_addr > buffer; max_addr = (char *)max_addr - PGSIZE) {
+    if (utok_addr (max_addr) == NULL)
       return NULL;
   }
   return retval;

@@ -164,11 +164,11 @@ process_wait (tid_t child_tid)
   }
 
   /* Wait for the child to complete process_cleanup */
+  lock_acquire (&t->child_lock);
   while (child->exec_state != PROCESS_DYING) {
-    lock_acquire (&t->child_lock);
     cond_wait (&t->child_done, &t->child_lock);
-    lock_release (&t->child_lock);
   }
+  lock_release (&t->child_lock);
 
   int exit_code = child->exit_code;
   child->exit_code = -1; // Invalidate future waits
@@ -211,8 +211,14 @@ process_cleanup (int exit_code)
     free (t->pinfo);
   /* Otherwise, update node to indicate to parent we're dead */
   } else {
-    t->pinfo->exec_state = PROCESS_DYING;
-    signal_parent (t->pinfo);
+    struct thread *parent = t->pinfo->parent;
+
+    /* We can't call signal_parent() atomically, since the exec_state
+       update must be locked by the child_lock */
+    lock_acquire (&parent->child_lock);
+    t->pinfo->exec_state = PROCESS_DYING; 
+    cond_signal (&parent->child_done, &parent->child_lock);
+    lock_release (&parent->child_lock);
   }
 
   /* Update all children's pinfos */ 

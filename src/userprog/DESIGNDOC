@@ -246,6 +246,10 @@ synchronize file accesses.
   struct file_map *fm;
   struct lock filesys_lock;
 
+cleanup_lock is used to synchronize resource freeing with process
+shutdown in process.c.
+
+  struct lock cleanup_lock;
 
 
 >> B2: Describe how file descriptors are associated with open files.
@@ -387,6 +391,12 @@ it detects bad user data. In all three cases, our error handling
 policy dictates that the kernel uses process_cleanup() to free
 any process-specific resources and exits the process immediately.
 
+For instance, suppose the user calls a system read with a read
+buffer that passes into an invalid page. The dispatcher will
+detect this before invoking syscall_read using buffer_valid,
+and will call syscall_exit. This in turn frees and terminates
+the offending user process.
+
 
 ---- SYNCHRONIZATION ----
 
@@ -417,20 +427,65 @@ signals to the blocking parent.
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
-There are 
+Regardless of the sequence of events, resources will be freed
+appropriately. Each proccess frees the pinfo of its exited children,
+as well as its own pinfo if the process has been orphaned.
+
+This resource freeing and the exit signalling described below
+are all locked under cleanup_lock so they occur atomically. This
+prevents interleaving of exit messages, and also prevents exiting
+children from interleaving with their parent's child cleanup.
+
+The synchronization boils down to the following:
+
+  parent:
+    obtain lock
+    while (child state is not dead)
+      wait for child signal
+    release lock
+    read exit code
+   
+  child:
+    obtain lock
+    write exit code
+    update state to dead
+    signal parent
+    release lock
+
+If P calls wait(C) before C exits, it first finds the child's pinfo
+and exits if C has exited. The first operation is unraceable since
+only a parent can modify its child list. It doesn't matter if C
+exits before or after the second operation, since, the synchro
+block for P will catch this.
+
+Then P enters the synchronization block. It locks and checks the
+child is still alive, then waits if the child is running. C can't
+possibly change its state or signal in between P's check and
+cond_wait due to the lock.
+
+When C finally does exit, it will update its state and exit code,
+then wake up the parent. Thus the parent will only unblock
+when the child has finished updating the shared pinfo.
+
+Next, suppose C exits first. Then it obtains the lock, updates pinfo,
+and signals the parent. It is impossible for the signal to be lost
+and result in the parent waiting forever, since the parent's
+check + wait cannot be interleaved with the childs' update + signal.
+
 
 ---- RATIONALE ----
 
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
-
 Because of the limitations on the user data that is ever touched by the 
 kernel, it is simplest to have the safe memory access functionality
 built directly into the syscall handler.
+
 The value of esp and the individual arguments must be validated right away,
 and the validity of specific pointer-type arguments can be verified as 
 soon as the type of system call is known.
+
 This form of validation makes it easy to halt the system call and kill
 the offending thread as soon as the error is noticed.
 

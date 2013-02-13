@@ -51,8 +51,9 @@ cmd field is used for the parent to pass the command string to the child.
       enum process_status exec_state;      /* State of process's lifecycle */
       int exit_code;                       /* Exit code */
       char *cmd;                           /* Used in process_execute to pass
-                                              the cmd args to the thread. It's
-                                              freed afterwards by the parent,
+                                              the cmd args to the thread. 
+                                              It's freed afterwards by 
+                                              the parent,
                                               so don't use after
                                               initialization! */
       struct list_elem elem;               /* List elem */
@@ -144,10 +145,10 @@ wait on one child at a time, one of each is enough.
     {
       ...
 
-      struct pinfo *pinfo;                /* This thread's process information */
-      struct list children;               /* List of child process information */
+      struct pinfo *pinfo;         /* This thread's process information */
+      struct list children;        /* List of child process information */
       
-      struct lock child_lock;              /* Lock for parent-child synchro */
+      struct lock child_lock;      /* Lock for parent-child synchro */
       struct condition child_done;         /* Condvar for the same */
       
       ...
@@ -173,8 +174,9 @@ pinfo is used for sharing data between parent and child processes.
       enum process_status exec_state;      /* State of process's lifecycle */
       int exit_code;                       /* Exit code */
       char *cmd;                           /* Used in process_execute to pass
-                                              the cmd args to the thread. It's
-                                              freed afterwards by the parent,
+                                              the cmd args to the thread. 
+                                              It's freed afterwards 
+                                              by the parent,
                                               so don't use after
                                               initialization! */
       struct list_elem elem;               /* List elem */
@@ -250,6 +252,7 @@ synchronize file accesses.
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
+
 The relationship between file descriptors and files is handled in 
 file-map.c and file-map.h, using the structs defined above.
 The system tracks a mapping from descriptors to file pointers and a list
@@ -260,10 +263,12 @@ attempts to perform a system call on a file handle that it does not
 own, this will be caught and rejected by the file-map abstraction.
 
 
+
 ---- ALGORITHMS ----
 
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
+
 
 File reads and writes are handled by directly passing user buffers
 into the corresponding file methods provided by filesys.h and file.h,
@@ -284,6 +289,24 @@ putbuf().
 >> (e.g. calls to pagedir_get_page()) that might result?  What about
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
+
+
+Our method of verifying user memory accesses handles each argument 
+passed into the kernel separately.  In this case, the most relevant 
+comparison is to the buffer_valid function, which checks only the 
+beginnning of the buffer and the beginning of each page which contains
+part of the buffer.  Therefore checking a contiguous, 4096-byte buffer
+will require either 1 or 2 calls to pagedir_get_page, depending on 
+whether the buffer lies perfectly within a single page.
+
+The same result is true of a 2-byte block; if it lies exactly on top of 
+a page boundary, it requires two reads (since that boundary could represent
+the edge of kernel space or the end of the mapped virtual memory).  
+Otherwise, it can be handled in one (and our code does so).
+
+There is no way to improve these statistics, since each individual page 
+of virtual memory must be verified independently.
+
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
@@ -385,6 +408,21 @@ There are
 
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
+
+
+Because of the limitations on the user data that is ever touched by the 
+kernel, it is simplest to have the safe memory access functionality
+built directly into the syscall handler.
+The value of esp and the individual arguments must be validated right away,
+and the validity of specific pointer-type arguments can be verified as 
+soon as the type of system call is known.
+This form of validation makes it easy to halt the system call and kill
+the offending thread as soon as the error is noticed.
+
+The actual validation is designed to minimize the amount of reads that 
+need to be done from the page table (see B4).  Our implementation 
+uses the fact that page boundaries align with addresses that are a 
+multiple of PGSIZE to do the minimum amount of comparisons possible.
 
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?

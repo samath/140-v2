@@ -109,22 +109,13 @@ sema_try_down (struct semaphore *sema)
 void
 sema_up (struct semaphore *sema) 
 {
-  enum intr_level old_level;
-  struct thread *high_thread = NULL;
 
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) { 
-    struct list_elem *max = list_max (&sema->waiters, thread_compare_priority, NULL);
-    high_thread = list_entry (max, struct thread, elem);
-    list_remove (max);
-    thread_unblock (high_thread);
-    //thread_unblock(list_entry(list_pop_front(&sema->waiters),struct thread,elem));
+    thread_unblock(list_entry(list_pop_front(&sema->waiters),struct thread,elem));
   }
-
   sema->value++;
   intr_set_level (old_level);
-
-  if (high_thread) thread_preempt (high_thread);
 }
 
 static void sema_test_helper (void *sema_);
@@ -199,51 +190,14 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
-  enum intr_level old_level;
-  bool is_donating = false;
-
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
-  old_level = intr_disable ();
-  if (lock->holder != NULL) {
-    is_donating = true;
-    thread_current ()->waiting_for = lock;
-    lock_donate_recursive (thread_current ());
-  }
-  intr_set_level (old_level);
-
   sema_down (&lock->semaphore);
-
-  // In donating priority, the thread calls malloc which in turn
-  // calls lock_acquire. We don't want malloc to stomp the record
-  // of the lock thread_current is currently waiting for.
-  if (is_donating)
-    thread_current ()->waiting_for = NULL;
   lock->holder = thread_current ();
 }
 
-/*
-   Recursive helper method to handle priority donation.
-   Adds a donation receipt for the current thread to the 
-     thread at each level according to which lock the 
-     current thread is waiting for.
-*/
-void
-lock_donate_recursive (struct thread *donator) {
-  if (thread_mlfqs) return;
-  struct lock *bottleneck = donator->waiting_for;
-
-  if (bottleneck == NULL || bottleneck->holder == NULL) return;
-  if (lock_held_by_current_thread (bottleneck)) return;
-
-  struct thread *next = bottleneck->holder;
-  ASSERT (next->tid != thread_current ()->tid);
-
-  thread_add_donation_receipt (next, bottleneck);
-  lock_donate_recursive(next);
-} 
 
 /* Tries to acquires LOCK and returns true if successful or false
    on failure.  The lock must not already be held by the current
@@ -277,68 +231,10 @@ lock_release (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
-
-  old_level = intr_disable();
-  struct donation_receipt *trash = lock_revoke_priority (lock); 
-
-  while (trash != NULL) {
-    struct donation_receipt *tmp = trash->next; 
-    free (trash);
-    trash = tmp;
-  }
-
-  intr_set_level (old_level);
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
 
-/* Revoke all priorities donated to the lock's holder. This is
-   accomplished by iterating through the donatee's donation_receipts
-   list and removing all of them associated with lock. Also updates
-   donatee's priority as the max of the remaining receipts. */
-struct donation_receipt *
-lock_revoke_priority (struct lock *lock) {
-  if (thread_mlfqs) return NULL;
-  struct thread *donatee = lock->holder;
-  struct donation_receipt *receipts = donatee->donation_receipts;
-  if (receipts == NULL) return NULL;
-
-  struct donation_receipt *trash = NULL, *prev = NULL, *next = NULL;
-  while (receipts != NULL) {
-    next = receipts->next;
-    if (receipts->lock == lock) {
-      if (prev == NULL) {
-        donatee->donation_receipts = next;
-      } else { 
-        prev->next = next;
-      }
-      receipts->next = trash;
-      trash = receipts;
-    } else {
-      prev = receipts;
-    }
-    receipts = next;
-  }
-
-  recompute_priority (donatee);
-  return trash;
-}
-
-/* Recompute the new effective priority of a thread based on 
-   its donation receipts. If there are no donation receipts, 
-   reset it to the base priority. Otherwise, take the max of
-   its base priority and the largest donation receipt. */
-void
-recompute_priority (struct thread *t) {
-  struct donation_receipt *receipt = t->donation_receipts;
-  if (receipt == NULL) {
-    t->eff_priority = t->base_priority;
-  } else {
-    int donated_priority = receipt->t->eff_priority;
-    t->eff_priority = (t->base_priority > donated_priority) ?
-                      t->base_priority : donated_priority;
-  }
-}
 
 /* Returns true if the current thread holds LOCK, false
    otherwise.  (Note that testing whether some other thread holds
@@ -430,18 +326,9 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
-  /*
   if (!list_empty (&cond->waiters)) 
     sema_up (&list_entry (list_pop_front (&cond->waiters),
                           struct semaphore_elem, elem)->semaphore);
-  */
-  enum intr_level old_level;
-  old_level = intr_disable ();
-  if (!list_empty (&cond->waiters)) { 
-    struct list_elem *max = list_max (&cond->waiters, cond_compare_priority, NULL);
-    list_remove (max);
-    sema_up (&list_entry (max, struct semaphore_elem, elem)->semaphore);
-  }
   intr_set_level (old_level);
 }
 

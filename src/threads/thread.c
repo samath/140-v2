@@ -665,10 +665,13 @@ next_thread_to_run (void)
   if (list_empty (&ready_list)) {
     return idle_thread;
   } else { 
+    /*
     struct list_elem *max = list_max (&ready_list, thread_compare_priority, NULL);
     struct thread *high_thread = list_entry (max, struct thread, elem);
     list_remove (max);
     return high_thread;
+    */
+    return list_entry (list_pop_front (&ready_list), struct thread, elem);
   }
 }
 

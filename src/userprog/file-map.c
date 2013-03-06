@@ -109,7 +109,9 @@ static int hash (void * addr)
   int result = 0, i = 3;
   for(; i >= 0; i--) 
     result = result * PRIME + (int) as_bytes[i];
-  return result % FP_TABLE_SIZE;
+  if (result < 0) result = -1 * result;
+  result = result % FP_TABLE_SIZE;
+  return result;
 }
 
 /* Walk the FD_TABLE to find the fdm_info corresponding to fd.

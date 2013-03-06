@@ -20,6 +20,7 @@ enum thread_status
 enum process_status
   {
     PROCESS_STARTING,    /* Loading executable */
+    PROCESS_AWAIT_PARENT,
     PROCESS_RUNNING,     /* Running */
     PROCESS_DYING,       /* Completed execution */
     PROCESS_ORPHANED     /* No more parental responsibilities */
@@ -124,12 +125,12 @@ struct thread
     struct condition child_done;         /* Condvar for the same */
 #endif
 
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
-
     /* mlfqs state */
     int nice;                           /* Thread niceness. */
     fixed_point recent_cpu;             /* Recent cpu usage */
+
+    /* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
   };
 
 /*

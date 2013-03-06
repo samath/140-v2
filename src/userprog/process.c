@@ -76,14 +76,18 @@ process_execute (const char *cmd)
 
   if (tid != TID_ERROR) {
     /* Wait for the child to finish or fail initialization before proceeding */
-    while (child->exec_state == PROCESS_STARTING) {
-      lock_acquire (&t->child_lock);
+    lock_acquire (&t->child_lock);
+    while (child->exec_state == PROCESS_STARTING)
       cond_wait (&t->child_done, &t->child_lock);
+
+    if (child->exit_code == -1) {
       lock_release (&t->child_lock);
+      return TID_ERROR;
     }
 
-    if (child->exit_code == -1)
-      return TID_ERROR;
+    child->exec_state = PROCESS_RUNNING;
+    cond_signal (&t->child_done, &t->child_lock);
+    lock_release (&t->child_lock);
   } else {
     palloc_free_page (child->cmd);
   }
@@ -106,6 +110,7 @@ start_process (void *pinfo_)
   struct thread *t = thread_current ();
   t->pinfo = pinfo;
   pinfo->tid = t->tid; 
+  pinfo->fp = NULL;
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -165,13 +170,11 @@ process_wait (tid_t child_tid)
 
   /* Wait for the child to complete process_cleanup */
   lock_acquire (&t->child_lock);
-  while (child->exec_state != PROCESS_DYING) {
+  while (child->exec_state != PROCESS_DYING)
     cond_wait (&t->child_done, &t->child_lock);
-  }
-  lock_release (&t->child_lock);
-
   int exit_code = child->exit_code;
   child->exit_code = -1; // Invalidate future waits
+  lock_release (&t->child_lock);
 
   return exit_code;
 }
@@ -235,7 +238,8 @@ process_cleanup (int exit_code)
   }
 
   /* Close all files opened by this process */
-  file_close (t->pinfo->fp);
+  if (t->pinfo->fp != NULL)
+    file_close (t->pinfo->fp);
 
   lock_release (&cleanup_lock);
 }
@@ -402,8 +406,16 @@ load (struct pinfo *pinfo, void (**eip) (void), void **esp)
     {
       file_deny_write (file);
       pinfo->fp = file;
-      pinfo->exec_state = PROCESS_RUNNING;
-      signal_parent (pinfo);
+      pinfo->exec_state = PROCESS_AWAIT_PARENT;
+
+      /* Signal the parent about the file load result */
+      lock_acquire (&pinfo->parent->child_lock);
+      cond_signal (&pinfo->parent->child_done, &pinfo->parent->child_lock);
+
+      /* Wait for the parent to read the result of our load */
+      while (pinfo->exec_state == PROCESS_AWAIT_PARENT)
+        cond_wait (&pinfo->parent->child_done, &pinfo->parent->child_lock);
+      lock_release (&pinfo->parent->child_lock);
     }
 
 

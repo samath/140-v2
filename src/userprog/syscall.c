@@ -35,18 +35,12 @@ static void *uptr_valid (void *uptr);
 static void *str_valid (void *str);
 static void *buffer_valid (void *buffer, unsigned size);
 
-struct file_map *fm;
 struct lock filesys_lock;
 
 void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  fm = init_file_map ();
-  if (fm == NULL) {
-    syscall_exit (-1);
-    return;
-  }
   lock_init (&filesys_lock);
   lock_init (&cleanup_lock);
 }
@@ -202,7 +196,7 @@ static void syscall_exit (int status)
 // Accessible in syscall.h for access to the syscall-handler's file map.
 void syscall_release_files ()
 {
-  close_fd_for_thread (fm);
+  close_fd_for_thread ();
 }
 
 static pid_t syscall_exec (const char *cmd)
@@ -236,18 +230,18 @@ static int syscall_open (const char *file)
 {
   lock_acquire (&filesys_lock);
   struct file* fp = filesys_open (file);
-  int retval = (fp) ? get_new_fd (fm, fp) : -1;
+  int retval = (fp) ? get_new_fd (fp) : -1;
   lock_release (&filesys_lock);
   return retval;
 }
 
 static int syscall_filesize (int fd)
 { 
-  struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  struct file_with_lock fwl = fwl_from_fd (fd);
   if (fwl.lock == NULL) return -1;
-  lock_acquire (fwl.lock);
+  //lock_acquire (fwl.lock);
   int retval = file_length (fwl.fp);
-  lock_release (fwl.lock);
+  //lock_release (fwl.lock);
   return retval;
 }
 
@@ -260,13 +254,13 @@ static int syscall_read (int fd, void *buffer, unsigned size)
     return 0;
   }
     
-  struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  struct file_with_lock fwl = fwl_from_fd (fd);
 
   int retval = -1;
   if (fwl.fp) {
-    lock_acquire (fwl.lock);
+    //lock_acquire (fwl.lock);
     retval = file_read (fwl.fp, buffer, size);
-    lock_release (fwl.lock);
+    //lock_release (fwl.lock);
   }
 
   return retval;
@@ -285,13 +279,13 @@ static int syscall_write (int fd, const void *buffer, unsigned size)
     return 0;
   }
 
-  struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  struct file_with_lock fwl = fwl_from_fd (fd);
 
   int retval = -1;
   if (fwl.fp) {
-    lock_acquire (fwl.lock);
+    //lock_acquire (fwl.lock);
     retval = file_write (fwl.fp, buffer, size);
-    lock_release (fwl.lock);
+    //lock_release (fwl.lock);
   }
 
   return retval;
@@ -299,32 +293,32 @@ static int syscall_write (int fd, const void *buffer, unsigned size)
 
 static void syscall_seek (int fd, unsigned position)
 {
-  struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  struct file_with_lock fwl = fwl_from_fd (fd);
   if (fwl.lock == NULL) {
     syscall_exit (-1);
     return;
   }
-  lock_acquire (fwl.lock);
+  //lock_acquire (fwl.lock);
   file_seek (fwl.fp, position);
-  lock_release (fwl.lock);
+  //lock_release (fwl.lock);
 }
 
 static unsigned syscall_tell (int fd) 
 {
-  struct file_with_lock fwl = fwl_from_fd (fm, fd);
+  struct file_with_lock fwl = fwl_from_fd (fd);
   if (fwl.lock == NULL) {
     syscall_exit (-1);
     return 1;
   }
-  lock_acquire (fwl.lock);
+  //lock_acquire (fwl.lock);
   unsigned retval = file_tell (fwl.fp);
-  lock_release (fwl.lock);
+  //lock_release (fwl.lock);
   return retval;
 }
 
 static void syscall_close (int fd)
 {
-  close_fd (fm, fd);
+  close_fd (fd);
 }
 
 

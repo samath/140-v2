@@ -3,6 +3,8 @@
 #include "threads/malloc.h"
 #include "threads/thread.h"
 
+static struct file_map *fm;
+
 /* Struct uniquely represents an open file. */
 struct fpm_info {
   struct file *fp;
@@ -28,10 +30,13 @@ struct file_map {
 
 static struct file_with_lock get_file_with_lock (struct fpm_info *fpm);
 static int hash (void *addr);
-static struct fdm_info* fdm_from_fd (struct file_map *fm, int fd);
-static struct fpm_info* fpm_from_fp (struct file_map *fm, struct file *fp);
-static struct file* fp_from_fd (struct file_map *fm, int fd);
-static void free_fdm (struct file_map *fm, struct fdm_info *fdm);
+static int hash_file (struct file *);
+static int hash_inode (struct inode *i);
+
+static struct fdm_info* fdm_from_fd (int fd);
+static struct fpm_info* fpm_from_fp (struct file *fp);
+static struct file* fp_from_fd (int fd);
+static void free_fdm (struct fdm_info *fdm);
 
 
 /* Convert an fpm into a struct containing a file and corresponding lock.
@@ -55,28 +60,24 @@ static struct file_with_lock get_file_with_lock (struct fpm_info *fpm)
 #define BASE_FD 2
 
 /* Called in syscall_init to set up empty hash maps. */
-struct file_map *init_file_map () 
+void init_file_map () 
 {
-  struct file_map *fm = malloc(sizeof(struct file_map));
-  if (fm == NULL) return NULL;
+  fm = (struct file_map *)malloc(sizeof(struct file_map));
+  if (fm == NULL) 
+    PANIC("file map creation failed");
   fm->fp_map = malloc(FP_TABLE_SIZE * sizeof(struct fpm_info *));
   fm->fd_map = malloc(FD_TABLE_SIZE * sizeof(struct fdm_info *));
-  if (fm->fp_map == NULL || fm->fd_map == NULL) {
-    free(fm->fd_map);
-    free(fm->fp_map);
-    free(fm);
-    return NULL;
-  }
+  if (fm->fp_map == NULL || fm->fd_map == NULL) 
+    PANIC("file map creation failed");
 
   int i = 0, j = 0;
   for(; i < FP_TABLE_SIZE; i++) fm->fp_map[i] = NULL;
   for(; j < FD_TABLE_SIZE; j++) fm->fd_map[j] = NULL;
   fm->next_fd = BASE_FD;
   lock_init (&(fm->file_map_lock));
-  return fm;
 }
 
-void destroy_file_map (struct file_map *fm) 
+void destroy_file_map () 
 {
   int i = 0, j = 0;
   for(; i < FP_TABLE_SIZE; i++) {
@@ -114,9 +115,19 @@ static int hash (void * addr)
   return result;
 }
 
+static int hash_file (struct file *f) 
+{
+  return hash (file_get_inode(f));
+}
+
+static int hash_inode (struct inode *i)
+{
+  return hash (i);
+}
+
 /* Walk the FD_TABLE to find the fdm_info corresponding to fd.
    Return NULL if none are found. */
-static struct fdm_info* fdm_from_fd (struct file_map *fm, int fd) 
+static struct fdm_info* fdm_from_fd (int fd) 
 {
   struct fdm_info * start = fm->fd_map[fd % FD_TABLE_SIZE];
   while(start) {
@@ -132,30 +143,40 @@ static struct fdm_info* fdm_from_fd (struct file_map *fm, int fd)
 
 /* Walk the FP_TABLE to find the fpm_info corresponding to fp.
    Return NULL if none are found. */
-static struct fpm_info* fpm_from_fp (struct file_map *fm, struct file *fp) 
+static struct fpm_info* fpm_from_fp (struct file *fp) 
 {
   if (fp == NULL) return NULL;
-  struct fpm_info * start = fm->fp_map[hash(fp)];
+  struct fpm_info * start = fm->fp_map[hash_file(fp)];
   while(start) {
     if(start->fp == fp) return start;
     start = start->next;
   }
   return NULL;
 }
-  
-/*  Use the FD_TABLE to check if fd is valid. If so, return the file. */
-static struct file* fp_from_fd (struct file_map *fm, int fd) 
+
+struct lock *lock_for_inode (struct inode *inode)
 {
-  struct fdm_info* fdm = fdm_from_fd(fm, fd);
+  struct fpm_info *start = fm->fp_map[hash_inode(inode)];
+  while (start) {
+    if(file_get_inode(start->fp) == inode) break;
+    start = start->next;
+  }
+  return &start->file_lock;
+}
+
+/*  Use the FD_TABLE to check if fd is valid. If so, return the file. */
+static struct file* fp_from_fd (int fd) 
+{
+  struct fdm_info* fdm = fdm_from_fd(fd);
   if(fdm) return fdm->fp;
   else return NULL;
 }
 
 /* Return file and lock for a given file descriptor. */
-struct file_with_lock fwl_from_fd (struct file_map *fm, int fd) 
+struct file_with_lock fwl_from_fd (int fd) 
 {
   lock_acquire (&(fm->file_map_lock));
-  struct fpm_info *fpm  = fpm_from_fp(fm, fp_from_fd(fm, fd));
+  struct fpm_info *fpm  = fpm_from_fp(fp_from_fd(fd));
   lock_release (&(fm->file_map_lock));
   return get_file_with_lock (fpm);
 }
@@ -165,13 +186,13 @@ struct file_with_lock fwl_from_fd (struct file_map *fm, int fd)
    Adds a new fdm_info to the fd_map.
    Returns the new file descriptor.
 */
-int get_new_fd (struct file_map *fm, struct file *fp) 
+int get_new_fd (struct file *fp) 
 { 
   struct fdm_info * new_fdm = malloc(sizeof(struct fdm_info));
   if (new_fdm == NULL) return -1;
 
   lock_acquire (&(fm->file_map_lock));
-  struct fpm_info * result = fpm_from_fp(fm, fp);
+  struct fpm_info * result = fpm_from_fp(fp);
   if(result == NULL) {  
     result = malloc(sizeof(struct fpm_info));
     if (result == NULL) {
@@ -182,9 +203,9 @@ int get_new_fd (struct file_map *fm, struct file *fp)
     // No existing file descriptors, initialize new fpm_info
     result->fp = fp;
     result->num_active = 0;
-    result->next = fm->fp_map[hash(fp)];
+    result->next = fm->fp_map[hash_file(fp)];
     lock_init (&(result->file_lock));
-    fm->fp_map[hash(fp)] = result;
+    fm->fp_map[hash_file(fp)] = result;
   }
 
   result->num_active++;
@@ -207,7 +228,7 @@ int get_new_fd (struct file_map *fm, struct file *fp)
    Decrements the num_active field for the corresponding file pointer.
    If num_active is 0, calls file_close on the file pointer.
 */
-void close_fd (struct file_map *fm, int fd) 
+void close_fd (int fd) 
 {
   lock_acquire (&(fm->file_map_lock));
   struct fdm_info *prev = fm->fd_map[fd % FD_TABLE_SIZE], *fdm = NULL;
@@ -244,12 +265,12 @@ void close_fd (struct file_map *fm, int fd)
     return;
   }
 
-  free_fdm (fm, fdm);
+  free_fdm (fdm);
   lock_release (&(fm->file_map_lock));
 }
 
 /* Close all file descriptors belonging to current thread. */
-void close_fd_for_thread (struct file_map *fm) 
+void close_fd_for_thread () 
 {
   lock_acquire (&(fm->file_map_lock));
 
@@ -262,14 +283,14 @@ void close_fd_for_thread (struct file_map *fm)
     while (prev && prev->thread_id == tid) {
       next = prev->next;
       fm->fd_map[i] = next;
-      free_fdm (fm, prev);
+      free_fdm (prev);
       prev = next;
     }    
     // Remove all of the thread's fds from the interior of the list
     while(next) {
       if(next->thread_id == tid) {
         prev->next = next->next;
-        free_fdm (fm, next);
+        free_fdm (next);
       } else {
         prev = next;
       }
@@ -284,12 +305,12 @@ void close_fd_for_thread (struct file_map *fm)
    Walk the FP_TABLE to decrement numActive for the given file.
    If numActive == 0, close the file and remove the fp_info.
 */
-static void free_fdm (struct file_map *fm, struct fdm_info *fdm) 
+static void free_fdm (struct fdm_info *fdm) 
 {
   struct file* fp = fdm->fp;
   free(fdm);
 
-  struct fpm_info *fpm = fpm_from_fp(fm, fp);
+  struct fpm_info *fpm = fpm_from_fp(fp);
   if(fpm == NULL) {
     return;
   }
@@ -297,9 +318,9 @@ static void free_fdm (struct file_map *fm, struct fdm_info *fdm)
   if(fpm->num_active == 0) {
     // No remaining file descriptors for file; free and close.
     // Must rewalk the list to find previous element and patch.
-    struct fpm_info *prev_fpm = fm->fp_map[hash(fp)];
+    struct fpm_info *prev_fpm = fm->fp_map[hash_file(fp)];
     if(prev_fpm == fpm) {
-      fm->fp_map[hash(fp)] = fpm->next;
+      fm->fp_map[hash_file(fp)] = fpm->next;
     } else { 
       while(prev_fpm->next) {
         if(prev_fpm->next == fpm) {

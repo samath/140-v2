@@ -298,6 +298,7 @@ cache_flush_block (int cache_idx)
 void
 cache_timed_flush(void *arg UNUSED)
 {
+  return;
   while(true)
   {
     timer_msleep(FLUSH_TIMER_MSECS);

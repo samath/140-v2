@@ -28,6 +28,7 @@
 #include "userprog/gdt.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
+#include "userprog/file-map.h"
 #else
 #include "tests/threads/tests.h"
 #endif
@@ -119,6 +120,10 @@ main (void)
   thread_start ();
   serial_init_queue ();
   timer_calibrate ();
+
+#ifdef USERPROG
+  init_file_map ();
+#endif
 
 #ifdef FILESYS
   /* Initialize file system. */

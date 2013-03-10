@@ -18,10 +18,15 @@ static struct list readahead_list;
 
 static int clock_hand;
 
+//TODO remove all plocks & pdata print statements. Clean up code in general.
+static bool plocks;
+static bool pdata;
 /* Initialize all cache entries in the global filesys gache */
 void
 cache_init (void)
 {
+  plocks = false;
+  pdata = false;
   lock_init(&cache_lock);
   clock_hand = 0;
   
@@ -60,7 +65,11 @@ block_read_cache(struct block *fs, block_sector_t block_num, void * data,
                  uint32_t offset, uint32_t size, bool metadata,
                  block_sector_t next_block_num)
 {
+  //printf("thread: %d starting block_read_cache\n", thread_current()->tid);
+  if(pdata) printf("thread: %d starting block_read_cache, block = %d, next_block = %d\n", thread_current()->tid, block_num, next_block_num);
+  if(plocks) printf("thread: %d trying to acquire cache lock in block_read_cache\n", thread_current()->tid);
   lock_acquire(&cache_lock);
+  if(plocks) printf("thread: %d acquired cache lock\n", thread_current()->tid);
   struct cache_entry *ce;
   int cache_idx = search_cache(block_num);
   //If block is not in cache, evict one if necessary and load new block
@@ -77,10 +86,13 @@ block_read_cache(struct block *fs, block_sector_t block_num, void * data,
     ce->fs = fs;
 
     lock_release(&cache_lock);
+    if(plocks) printf("thread: %d released cache lock in block_read_cache\n", thread_current()->tid);
 
     block_read(ce->fs, ce->block_num, ce->data);
 
+    if(plocks) printf("thread: %d trying to acquire cache lock in block_read_cache\n", thread_current()->tid);
     lock_acquire(&cache_lock);
+    if(plocks) printf("thread: %d acquired cache lock\n", thread_current()->tid);
 
   }
   else
@@ -92,6 +104,7 @@ block_read_cache(struct block *fs, block_sector_t block_num, void * data,
 
   memcpy(data, ce->data + offset, size);
   ce->handlers--;
+  if(plocks) printf("thread: %d broadcasting in block_read_cache\n", thread_current()->tid);
   cond_broadcast(&ce->cond, &cache_lock);
 
   if((int)ce->readahead != -1)
@@ -101,6 +114,7 @@ block_read_cache(struct block *fs, block_sector_t block_num, void * data,
   }
 
   lock_release(&cache_lock);
+  if(plocks) printf("thread: %d released cache lock in block_read_cache\n", thread_current()->tid);
 }
 
 /* Write a block of data utilizing caching and the read-ahead and write-behind
@@ -110,7 +124,10 @@ block_write_cache (struct block *fs, block_sector_t block_num,
                    const void * data, uint32_t offset, uint32_t size,
                    bool metadata, block_sector_t next_block_num)
 {
+  if(pdata) printf("thread: %d starting block_write_cache, block = %d, next_block = %d\n", thread_current()->tid, block_num, next_block_num);
+  if(plocks) printf("thread: %d trying to acquire cache lock in block_write_cache\n", thread_current()->tid);
   lock_acquire(&cache_lock);
+  if(plocks) printf("thread: %d acquired cache lock\n", thread_current()->tid);
   struct cache_entry *ce;
   int cache_idx = search_cache(block_num);
   //If block is not in cache, evict one if necessary and load new block
@@ -127,10 +144,13 @@ block_write_cache (struct block *fs, block_sector_t block_num,
     ce->fs = fs;
 
     lock_release(&cache_lock);
+    if(plocks) printf("thread: %d released cache lock in block_write_cache\n", thread_current()->tid);
 
     block_read(ce->fs, ce->block_num, ce->data);
 
+    if(plocks) printf("thread: %d trying to acquire cache lock in block_write_cache\n", thread_current()->tid);
     lock_acquire(&cache_lock);
+    if(plocks) printf("thread: %d acquired cache lock\n", thread_current()->tid);
 
   }
   else
@@ -143,6 +163,7 @@ block_write_cache (struct block *fs, block_sector_t block_num,
   memcpy(ce->data + offset, data, size);
   ce->dirty = true;
   ce->handlers--;
+  if(plocks) printf("thread: %d broadcasting in block_write_cache\n", thread_current()->tid);
   cond_broadcast(&ce->cond, &cache_lock);
 
   if((int)ce->readahead != -1)
@@ -152,6 +173,7 @@ block_write_cache (struct block *fs, block_sector_t block_num,
   }
 
   lock_release(&cache_lock);
+  if(plocks) printf("thread: %d released cache lock in block_write_cache\n", thread_current()->tid);
 }
 
 /* Search the cache for the specificed block. If found, return the index.
@@ -165,7 +187,11 @@ search_cache (block_sector_t block_num)
     if(cache[i].block_num == block_num)
     {
       while(cache[i].handlers > 0)
+      {
+        if(plocks) printf("thread: %d releasing lock and waiting in search_cache\n", thread_current()->tid);
         cond_wait(&cache[i].cond, &cache_lock);
+        if(plocks) printf("thread: %d finished waiting in search_cache\n", thread_current()->tid);
+      }
       if(cache[i].block_num == block_num)
       {
         cache[i].handlers++;
@@ -178,7 +204,10 @@ search_cache (block_sector_t block_num)
     {
       /* The desired block is being read in by the readahead thread. Wait
        * patiently for it to be inserted into cache and restart search. */
+      if(plocks) printf("thread: %d releasing lock and waiting in search_cache\n", thread_current()->tid);
       cond_wait(&cache[i].cond, &cache_lock);
+      if(plocks) printf("thread: %d finished waiting in search_cache\n", thread_current()->tid);
+      i = -1;
       i = -1;
     }
   }
@@ -194,11 +223,14 @@ int
 cache_eviction (void)
 {
   int evict = -1;
+  if(pdata) printf("thread: %d starting cache_eviction\n", thread_current()->tid);
   while(true)
   {
     struct cache_entry *ce = &cache[clock_hand];
     if(ce->handlers > 0)
-      continue;
+    {
+      if(pdata) printf("thread: %d In cache_eviction, block %d has >0 handlers\n", thread_current()->tid, ce->block_num);
+    }
     else if(ce->priority > 0)
       ce->priority--;
     else
@@ -214,6 +246,7 @@ cache_eviction (void)
   if(evict != -1)
     break;
   }
+  if(pdata) printf("thread: %d evicting block %d\n", thread_current()->tid, evict);
   return evict;
 }
 
@@ -221,15 +254,19 @@ cache_eviction (void)
 void
 cache_flush_all (void)
 {
+  if(plocks) printf("thread: %d trying to acquire cache lock in cache_flush_all\n", thread_current()->tid);
   lock_acquire(&cache_lock);
+  if(plocks) printf("thread: %d acquired cache lock\n", thread_current()->tid);
   int i = 0;
   for(i = 0; i<CACHE_SIZE; i++)
   {
     cache_flush_block(i);
     cache[i].handlers--;
+    if(plocks) printf("thread: %d broadcasting in cache_flush_block\n", thread_current()->tid);
     cond_broadcast(&cache[i].cond, &cache_lock);
   }
   lock_release(&cache_lock);
+  if(plocks) printf("thread: %d released cache lock in cache_flush_all\n", thread_current()->tid);
 }
 
 /* Force the flush of a specified block in the cache */
@@ -238,14 +275,21 @@ cache_flush_block (int cache_idx)
 {
   struct cache_entry *ce = &cache[cache_idx];
   while(ce->handlers > 0)
+  {
+    if(plocks) printf("thread: %d releasing lock and waiting in cache_flush_block\n", thread_current()->tid);
     cond_wait(&ce->cond, &cache_lock);
+    if(plocks) printf("thread: %d finished waiting in cache_flush_block\n", thread_current()->tid);
+  }
   ce->handlers++;
 
   if(ce->dirty)
   {
     lock_release(&cache_lock);
+    if(plocks) printf("thread: %d released cache lock in cache_flush_block\n", thread_current()->tid);
     block_write(ce->fs, ce->block_num, ce->data);
+    if(plocks) printf("thread: %d trying to acquire cache lock in cache_flush_block\n", thread_current()->tid);
     lock_acquire(&cache_lock);
+    if(plocks) printf("thread: %d acquired cache lock\n", thread_current()->tid);
     ce->dirty = false;
   }
 }
@@ -265,11 +309,12 @@ cache_timed_flush(void *arg UNUSED)
 void
 add_readahead_order (struct block *fs, block_sector_t next_block_num)
 {
-  return;
+  if(pdata) printf("thread: %d starting add_readahead_order, block = %d\n", thread_current()->tid, next_block_num);
   struct readahead_order *order = malloc(sizeof(struct readahead_order));
   if(order == NULL)
     PANIC("Failed to malloc readahead order in filesys\n");
   order->block_num = next_block_num;
+  if(pdata) printf("thread: %d pushing to readahead list, block = %d\n", thread_current()->tid, order->block_num);
   order->fs = fs;
 
   lock_acquire(&readahead_lock);
@@ -292,8 +337,12 @@ cache_readahead (void *arg UNUSED)
 
     while(!list_empty(&readahead_list))
     {
-      order = (struct readahead_order *)list_pop_front(&readahead_list);
+      order = list_entry (list_pop_front(&readahead_list),
+                          struct readahead_order, elem);
+      if(pdata) printf("thread: %d handling readahead request, block = %d\n", thread_current()->tid, order->block_num);
+      lock_release(&readahead_lock);
       block_read_cache(order->fs, order->block_num, data, 0, 0, false, -1);
+      lock_acquire(&readahead_lock);
       free(order);
     }
 

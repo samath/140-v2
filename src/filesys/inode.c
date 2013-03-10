@@ -227,6 +227,8 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
       
+      //TODO replace "sector_idx + 1" with function that returns the
+      //sector that comes after sector_idx. Is +1 good enough?
       block_read_cache(fs_device, sector_idx, buffer + bytes_read, sector_ofs,
                        chunk_size, false, sector_idx + 1);
       
@@ -272,8 +274,10 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       if (chunk_size <= 0)
         break;
 
+      //TODO replace "sector_idx + 1" with function that returns the
+      //sector that comes after sector_idx. Is +1 good enough?
       block_write_cache(fs_device, sector_idx, buffer + bytes_written,
-                        sector_ofs, chunk_size, false, -1);
+                        sector_ofs, chunk_size, false, sector_idx + 1);
 
       /* Advance. */
       size -= chunk_size;

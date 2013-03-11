@@ -233,7 +233,7 @@ inode_create (block_sector_t sector, off_t length)
       struct inode inode;
       inode.data = *disk_inode;
       inode.sector = sector;
-      int num_sectors = (length - 1) / BLOCK_SECTOR_SIZE + 1;
+      int num_sectors = bytes_to_sectors (length);
       for(i = 0; i < num_sectors; i ++) 
         allocate_block (&inode, i);
 
@@ -335,7 +335,6 @@ inode_close (struct inode *inode)
       /* Deallocate blocks if removed. */
       if (inode->removed) 
         {
-          free_map_release (inode->sector, 1);
           int i = 0;
           for (; i < inode->data.length; i += BLOCK_SECTOR_SIZE) {
             // TODO optimize, free indirect blocks, etc.           
@@ -344,6 +343,7 @@ inode_close (struct inode *inode)
               free_map_release (block, 1);
             }
           }
+          free_map_release (inode->sector, 1);
         }
 
       free (inode); 
@@ -382,6 +382,10 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 
       /* Number of bytes to actually copy out of this sector. */
       int chunk_size = size < min_left ? size : min_left;
+   
+      //printf("%d, %d, %d, %d, %d %d\n", size, offset,
+      //    inode_left, sector_left, min_left, chunk_size);
+   
       if (chunk_size <= 0)
         break;
 
@@ -414,6 +418,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   const uint8_t *buffer = buffer_;
   off_t bytes_written = 0;
   bool locked = false;
+  struct lock *lock = lock_for_inode (inode);
 
   if (inode->deny_write_cnt)
     return 0;
@@ -424,8 +429,10 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       block_sector_t next;
       block_sector_t sector_idx = byte_to_sector (inode, offset, &next);
       if (sector_idx == NO_BLOCK) {
-        lock_acquire (lock_for_inode(inode));
-        locked = true;
+        if (!locked) {
+          lock_acquire (lock);
+          locked = true;
+        }
         sector_idx = allocate_block (inode, offset / BLOCK_SECTOR_SIZE);
 
         if (sector_idx == NO_BLOCK)
@@ -441,8 +448,6 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       if (chunk_size <= 0)
         break;
 
-      //TODO replace "sector_idx + 1" with function that returns the
-      //sector that comes after sector_idx. Is +1 good enough?
       block_write_cache(fs_device, sector_idx, buffer + bytes_written,
                         sector_ofs, chunk_size, false, next);
 
@@ -453,13 +458,16 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     }
   //free (bounce);
   if (inode_length (inode) < offset - 1) {
-    
-    inode->data.length = offset - 1;
+    if (!locked) {
+      lock_acquire (lock);
+      locked = true;
+    }
+    inode->data.length = offset;
     block_write_cache (fs_device, inode->sector, &inode->data,
                        0, BLOCK_SECTOR_SIZE, true, -1);
  }
 
-  if (locked) lock_release (lock_for_inode(inode));
+  if (locked) lock_release (lock);
   return bytes_written;
 }
 

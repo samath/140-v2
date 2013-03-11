@@ -156,11 +156,13 @@ static struct fpm_info* fpm_from_fp (struct file *fp)
 
 struct lock *lock_for_inode (struct inode *inode)
 {
+  lock_acquire (&(fm->file_map_lock));
   struct fpm_info *start = fm->fp_map[hash_inode(inode)];
   while (start) {
     if(file_get_inode(start->fp) == inode) break;
     start = start->next;
   }
+  lock_release (&(fm->file_map_lock));
   return &start->file_lock;
 }
 

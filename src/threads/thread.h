@@ -134,7 +134,7 @@ struct thread
     fixed_point recent_cpu;             /* Recent cpu usage */
 
 #ifdef FILESYS
-    block_sector_t dir;                 /* Working directory */
+    block_sector_t wd;                 /* Working directory */
 #endif
 
     /* Owned by thread.c. */

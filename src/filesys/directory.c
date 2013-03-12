@@ -4,7 +4,9 @@
 #include <list.h>
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
+#include "lib/string.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
 
 /* A directory. */
 struct dir 
@@ -131,6 +133,70 @@ dir_lookup (const struct dir *dir, const char *name,
 
   return *inode != NULL;
 }
+
+
+/* Searches for a file with the given PATH and returns the inumber of the
+   file, -1 otherwise.
+
+   If PATH begins with a '/', initiates the search from the root directory.
+   Otherwise, searches using the current thread's working directory */
+block_sector_t
+dir_lookup_recursive (const char *path)
+{
+  int len = strlen (path);
+  char buf[len + 1];    
+  strlcpy (buf, path, len + 1); 
+
+  if (len == 0)
+    return thread_current ()->wd;
+
+  /* Initialize directory entry */
+  struct dir dir;
+  struct dir_entry entry;
+  block_sector_t sector; 
+
+  if (buf[0] == '/') 
+    sector = ROOT_DIR_SECTOR;
+  else
+    sector = thread_current ()->wd;
+
+  /* Remove trailing '/' */
+  char *c = &buf[len - 1];
+  while (*c == '/') {
+    *c = '\0';
+    c--;
+  }
+
+  c = &buf[0];
+  while (true) {
+    /* Remove leading '/' */
+    while (*c == '/')
+      c++;
+
+    if (*c == '\0')
+      return sector;
+
+    /* Advance to the next '/' and zero it */
+    char *next = strchr (c, '/');
+    if (next != NULL)
+      *next = '\0';
+    
+    dir.inode = inode_open (sector);
+    bool success = lookup (&dir, c, &entry, NULL);
+
+    if (!success)
+      return -1;
+
+    sector = entry.inode_sector;
+    inode_close (dir.inode);
+
+    if (next == NULL)
+      return sector;
+
+    c = next + 1;
+  }
+}
+
 
 /* Adds a file named NAME to DIR, which must not already contain a
    file by that name.  The file's inode is in sector

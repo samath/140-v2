@@ -408,6 +408,10 @@ load (struct pinfo *pinfo, void (**eip) (void), void **esp)
       pinfo->fp = file;
       pinfo->exec_state = PROCESS_AWAIT_PARENT;
 
+      /* Set working directory */
+      struct thread *t = thread_current ();
+      t->wd = pinfo->parent->wd; // If the parent is a kernel thread, starts as root
+
       /* Signal the parent about the file load result */
       lock_acquire (&pinfo->parent->child_lock);
       cond_signal (&pinfo->parent->child_done, &pinfo->parent->child_lock);

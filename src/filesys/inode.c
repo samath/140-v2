@@ -312,6 +312,13 @@ inode_reopen (struct inode *inode)
   return inode;
 }
 
+/* Returns whether or not INODE is a directory. */
+bool
+inode_isdir (const struct inode *inode)
+{
+  return inode->data.isdir != 0;
+}
+
 /* Returns INODE's inode number. */
 block_sector_t
 inode_get_inumber (const struct inode *inode)

@@ -8,11 +8,13 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "lib/syscall-nr.h"
+#include "lib/user/syscall.h"
 #include "devices/shutdown.h"
 #include "devices/input.h"
 #include "threads/synch.h"
 #include "pagedir.h"
 #include "threads/vaddr.h"
+
 
 static void syscall_handler (struct intr_frame *);
 
@@ -29,6 +31,12 @@ static int syscall_write (int fd, const void *buffer, unsigned size);
 static void syscall_seek (int fd, unsigned position);
 static unsigned syscall_tell (int fd);
 static void syscall_close (int fd);
+
+static bool syscall_chdir (const char *dir);
+static bool syscall_mkdir (const char *dir);
+static bool syscall_readdir (int fd, char *name);
+static bool syscall_isdir (int fd);
+static int syscall_inumber (int fd);
 
 static void *utok_addr (void *uptr);
 static void *uptr_valid (void *uptr);
@@ -62,7 +70,12 @@ static int syscall_argc[] =
     3,  // Write
     2,  // Seek
     1,  // Tell
-    1   // Close
+    1,  // Close
+    1,  // Chdir
+    1,  // Mkdir
+    1,  // Readdir
+    1,  // Isdir
+    1,  // Inumber
   };
 
 static void
@@ -171,6 +184,33 @@ syscall_handler (struct intr_frame *f)
       break;
     case SYS_CLOSE:
       syscall_close ((int) argbuf[0]);
+      break;
+    case SYS_CHDIR:
+      if (str_valid ((char *) argbuf[0]) == NULL) {
+        syscall_exit (-1);
+        return;
+      }
+      retval = (int) syscall_chdir ((char *) argbuf[0]);
+      break;
+    case SYS_MKDIR:
+      if (str_valid ((char *) argbuf[0]) == NULL) {
+        syscall_exit (-1);
+        return;
+      }
+      retval = (int) syscall_mkdir ((char *) argbuf[0]);
+      break;
+    case SYS_READDIR:
+      if (buffer_valid ((void *) argbuf[1], READDIR_MAX_LEN + 1) == NULL) {
+        syscall_exit (-1);
+        return;
+      }
+      retval = (int) syscall_readdir ((int) argbuf[0], (char *) argbuf[1]);
+      break;
+    case SYS_ISDIR:
+      retval = (int) syscall_isdir ((int) argbuf[0]);
+      break;
+    case SYS_INUMBER:
+      retval = syscall_inumber ((int) argbuf[0]);
       break;
     default:
       printf("unhandled system call!\n");
@@ -320,6 +360,43 @@ static void syscall_close (int fd)
 {
   close_fd (fd);
 }
+
+
+static bool syscall_chdir (const char *dir)
+{
+  return true;
+  //return filesys_chdir (dir); 
+}
+
+static bool syscall_mkdir (const char *dir)
+{
+  return true;
+  //return filesys_mkdir (dir);
+}
+
+static bool syscall_readdir (int fd, char *name)
+{
+  return true;
+}
+
+static bool syscall_isdir (int fd)
+{
+  struct file_with_lock fwl = fwl_from_fd (fd);
+  if (fwl.lock == NULL) return false;
+  return inode_isdir (file_get_inode (fwl.fp));
+}
+
+static int syscall_inumber (int fd)
+{
+  struct file_with_lock fwl = fwl_from_fd (fd);
+  if (fwl.lock == NULL) return -1;
+  return inode_get_inumber (file_get_inode (fwl.fp));
+}
+
+
+/**********************/
+/* USER MEMORY ACCESS */
+/**********************/
 
 
 /* Convert a user virtual addr into a kernel virtual addr.

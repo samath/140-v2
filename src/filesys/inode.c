@@ -15,7 +15,7 @@
 
 /* Breakdown of multilevel index in inode_disk */
 #define DIRECT_BLOCKS 64
-#define INDIRECT_BLOCKS 61 
+#define INDIRECT_BLOCKS 60 
 #define DOUBLY_INDIRECT 1
 #define TOTAL_BLOCKS (DIRECT_BLOCKS + INDIRECT_BLOCKS + DOUBLY_INDIRECT)
 #define INDIRECT_SIZE (BLOCK_SECTOR_SIZE / sizeof(block_sector_t))
@@ -28,6 +28,7 @@
 struct inode_disk
   {
     off_t length;                       /* File size in bytes. */
+    unsigned isdir;                     /* Nonzero for directories */
     unsigned magic;                     /* Magic number. */
     block_sector_t blocks[TOTAL_BLOCKS];         /* Block table. */
   };
@@ -205,7 +206,7 @@ inode_init (void)
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create (block_sector_t sector, off_t length)
+inode_create (block_sector_t sector, off_t length, bool isdir)
 {
   struct inode_disk *disk_inode = NULL;
   bool success = false;
@@ -221,6 +222,8 @@ inode_create (block_sector_t sector, off_t length)
     {
       disk_inode->length = length;
       disk_inode->magic = INODE_MAGIC;
+      disk_inode->isdir = isdir ? 1 : 0;
+
       // Initialize all block entries to -1 (NO_BLOCK).
       int i = 0;
       for(; i < TOTAL_BLOCKS; i++) disk_inode->blocks[i] = NO_BLOCK;

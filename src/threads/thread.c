@@ -624,6 +624,8 @@ init_thread (struct thread *t, const char *name, int priority)
   cond_init (&t->child_done);
   t->pinfo = NULL;
 
+  t->dir = ROOT_DIR_SECTOR;
+
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();

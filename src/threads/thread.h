@@ -4,8 +4,12 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "devices/block.h"
 #include "threads/fixed-point.h"
 #include "threads/synch.h"
+#ifdef FILESYS
+#include "filesys/filesys.h"
+#endif
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -128,6 +132,10 @@ struct thread
     /* mlfqs state */
     int nice;                           /* Thread niceness. */
     fixed_point recent_cpu;             /* Recent cpu usage */
+
+#ifdef FILESYS
+    block_sector_t dir;                 /* Working directory */
+#endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */

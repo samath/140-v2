@@ -68,6 +68,7 @@ file_get_inode (struct file *file)
 off_t
 file_read (struct file *file, void *buffer, off_t size) 
 {
+  if (inode_isdir (file->inode)) return -1;
   off_t bytes_read = inode_read_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_read;
   return bytes_read;
@@ -81,6 +82,7 @@ file_read (struct file *file, void *buffer, off_t size)
 off_t
 file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
 {
+  if (inode_isdir (file->inode)) return -1;
   return inode_read_at (file->inode, buffer, size, file_ofs);
 }
 
@@ -94,6 +96,7 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t
 file_write (struct file *file, const void *buffer, off_t size) 
 {
+  if (inode_isdir (file->inode)) return -1;
   off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
   return bytes_written;
@@ -110,6 +113,7 @@ off_t
 file_write_at (struct file *file, const void *buffer, off_t size,
                off_t file_ofs) 
 {
+  if (inode_isdir (file->inode)) return -1;
   return inode_write_at (file->inode, buffer, size, file_ofs);
 }
 
@@ -145,6 +149,7 @@ off_t
 file_length (struct file *file) 
 {
   ASSERT (file != NULL);
+  if (inode_isdir (file->inode)) return -1;
   return inode_length (file->inode);
 }
 
@@ -163,6 +168,7 @@ file_seek (struct file *file, off_t new_pos)
 off_t
 file_tell (struct file *file) 
 {
+  if (inode_isdir (file->inode)) return -1;
   ASSERT (file != NULL);
   return file->pos;
 }

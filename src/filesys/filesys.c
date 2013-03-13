@@ -104,7 +104,7 @@ filesys_open (const char *path)
     return NULL;
 
   struct inode *inode = inode_open (file_sector);
-  if (inode == NULL || inode_isdir(inode))
+  if (inode == NULL)
     return NULL;
 
   return file_open (inode);

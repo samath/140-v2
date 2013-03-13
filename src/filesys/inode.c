@@ -439,7 +439,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       block_sector_t next;
       block_sector_t sector_idx = byte_to_sector (inode, offset, &next);
       if (sector_idx == NO_BLOCK) {
-        if (!locked) {
+        if (lock != NULL && !locked) {
           lock_acquire (lock);
           locked = true;
         }
@@ -468,7 +468,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     }
   //free (bounce);
   if (inode_length (inode) < offset - 1) {
-    if (!locked) {
+    if (lock != NULL && !locked) {
       lock_acquire (lock);
       locked = true;
     }
@@ -477,7 +477,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
                        0, BLOCK_SECTOR_SIZE, true, -1);
  }
 
-  if (locked) lock_release (lock);
+  if (lock != NULL && locked) lock_release (lock);
   return bytes_written;
 }
 

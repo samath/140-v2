@@ -253,7 +253,7 @@ static int syscall_wait (pid_t pid)
 static bool syscall_create (const char *file, unsigned initial_size)
 {
   lock_acquire (&filesys_lock);
-  bool retval = filesys_create (file, initial_size);
+  bool retval = filesys_create (file, initial_size, false);
   lock_release (&filesys_lock);
   return retval;
 }
@@ -364,14 +364,12 @@ static void syscall_close (int fd)
 
 static bool syscall_chdir (const char *dir)
 {
-  return true;
-  //return filesys_chdir (dir); 
+  return filesys_chdir (dir); 
 }
 
 static bool syscall_mkdir (const char *dir)
 {
-  return true;
-  //return filesys_mkdir (dir);
+  return filesys_create (dir, 0, true);
 }
 
 static bool syscall_readdir (int fd, char *name)

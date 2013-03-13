@@ -144,11 +144,10 @@ block_sector_t
 dir_lookup_recursive (const char *path)
 {
   int len = strlen (path);
-  char buf[len + 1];    
-  strlcpy (buf, path, len + 1); 
-
   if (len == 0)
     return thread_current ()->wd;
+  char buf[len + 1];    
+  strlcpy (buf, path, len + 1); 
 
   /* Initialize directory entry */
   struct dir dir;

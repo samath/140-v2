@@ -88,6 +88,13 @@ filesys_create (const char *path, off_t initial_size, bool isdir)
   if (!success && file_sector != 0) 
     free_map_release (file_sector, 1);
 
+  /* Populate with '.' and '..' */
+  if (success && isdir) {
+    struct dir *new_dir = dir_open (inode_open (file_sector));
+    dir_add (new_dir, ".", file_sector);
+    dir_add (new_dir, "..", dir_sector);
+    dir_close (new_dir);
+  }
 
   dir_close (dir);
 

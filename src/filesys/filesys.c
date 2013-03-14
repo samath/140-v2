@@ -59,8 +59,6 @@ filesys_create (const char *path, off_t initial_size, bool isdir)
   char buf[len + 1];
   strlcpy (buf, path, len + 1); 
 
-  //printf ("create %s\n", path);
-  
   /* Identify the file and the directory components,
      as well as the sector of the containing dir. */
   char *f = &buf[len];
@@ -115,15 +113,41 @@ filesys_open (const char *path)
   return file_open (inode);
 }
 
-/* Deletes the file named NAME.
+/* Deletes the file with the given PATH.
    Returns true if successful, false on failure.
-   Fails if no file named NAME exists,
+   Fails if no file at PATH exists,
    or if an internal memory allocation fails. */
 bool
-filesys_remove (const char *name) 
+filesys_remove (const char *path) 
 {
-  struct dir *dir = dir_open_root ();
-  bool success = dir != NULL && dir_remove (dir, name);
+  int len = strlen(path);
+  if (len == 0)
+    return false;
+  char buf[len + 1];
+  strlcpy (buf, path, len + 1); 
+
+  /* Identify the file and the directory components,
+     as well as the sector of the containing dir. */
+  char *f = &buf[len];
+  while (f != &buf[0] && *f != '/')
+    f--;
+
+  block_sector_t dir_sector;
+  block_sector_t file_sector;
+
+  if (f != &buf[0]) {
+    *f = '\0'; 
+    if ((dir_sector = dir_lookup_recursive (buf)) == -1)
+      return false;
+    f++;
+  } else {
+    dir_sector = thread_current ()->wd;
+    if (*f == '/')
+      f++;
+  }
+
+  struct dir *dir = dir_open (inode_open (dir_sector));
+  bool success = dir != NULL && dir_remove (dir, f);
   dir_close (dir); 
 
   return success;

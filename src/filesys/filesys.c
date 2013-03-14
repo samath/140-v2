@@ -70,7 +70,7 @@ filesys_create (const char *path, off_t initial_size, bool isdir)
 
   if (f != &buf[0]) {
     *f = '\0'; 
-    if ((dir_sector = dir_lookup_recursive (buf)) == -1)
+    if ((dir_sector = dir_lookup_recursive (buf)) == DIR_LOOKUP_ERROR)
       return false;
     f++;
   } else {
@@ -110,7 +110,7 @@ struct file *
 filesys_open (const char *path)
 {
   block_sector_t file_sector = dir_lookup_recursive (path);
-  if (file_sector == -1)
+  if (file_sector == DIR_LOOKUP_ERROR)
     return NULL;
 
   struct inode *inode = inode_open (file_sector);
@@ -144,7 +144,7 @@ filesys_remove (const char *path)
 
   if (f != &buf[0]) {
     *f = '\0'; 
-    if ((dir_sector = dir_lookup_recursive (buf)) == -1)
+    if ((dir_sector = dir_lookup_recursive (buf)) == DIR_LOOKUP_ERROR)
       return false;
     f++;
   } else {
@@ -179,7 +179,7 @@ bool
 filesys_chdir (const char *dir)
 {
   block_sector_t inumber = dir_lookup_recursive (dir);
-  if (inumber == -1)
+  if (inumber == DIR_LOOKUP_ERROR)
     return false;
   
   struct inode *inode = inode_open (inumber);

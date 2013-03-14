@@ -186,7 +186,7 @@ dir_lookup_recursive (const char *path)
     bool success = lookup (&dir, c, &entry, NULL);
 
     if (!success)
-      return -1;
+      return DIR_LOOKUP_ERROR;
 
     sector = entry.inode_sector;
     inode_close (dir.inode);

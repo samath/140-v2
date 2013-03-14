@@ -11,6 +11,10 @@
    retained, but much longer full path names must be allowed. */
 #define NAME_MAX 14
 
+/* Used as an error by dir_lookup_recursive.
+   Necessary to get rid of unsigned / signed comparison warnings. */
+#define DIR_LOOKUP_ERROR ((block_sector_t) -1)
+
 struct inode;
 
 /* Opening and closing directories. */

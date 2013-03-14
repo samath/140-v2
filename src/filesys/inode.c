@@ -375,14 +375,20 @@ inode_remove (struct inode *inode)
 off_t
 inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) 
 {
+  struct file_synch_status *status = status_for_inode (inode);
+  if (status) {
+    lock_acquire (&status->lock);
+    while (status->writers_waiting != 0) 
+      cond_wait (&status->read_cond, &status->lock);
+    status->readers_running++;
+    lock_release (&status->lock);
+  }
+  
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
 
   while (size > 0) 
     {
-      /* Disk sector to read, starting byte offset within sector. */
-      block_sector_t next;
-      block_sector_t sector_idx = byte_to_sector (inode, offset, &next);
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
       /* Bytes left in inode, bytes left in sector, lesser of the two. */
@@ -393,18 +399,19 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       /* Number of bytes to actually copy out of this sector. */
       int chunk_size = size < min_left ? size : min_left;
    
-      //printf("%d, %d, %d, %d, %d %d\n", size, offset,
-      //    inode_left, sector_left, min_left, chunk_size);
-   
       if (chunk_size <= 0)
         break;
 
+      /* Disk sector to read, starting byte offset within sector. */
+      block_sector_t next;
+      block_sector_t sector_idx = byte_to_sector (inode, offset, &next);
+      
       if (sector_idx != NO_BLOCK) { 
         block_read_cache(fs_device, sector_idx, 
                          buffer + bytes_read, sector_ofs,
                          chunk_size, false, next);
       } else {
-        memset (buffer + bytes_read, 0, chunk_size);
+        PANIC ("no block found");
       }
 
       /* Advance. */
@@ -412,6 +419,13 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       offset += chunk_size;
       bytes_read += chunk_size;
     }
+
+  if (status) {
+    lock_acquire (&status->lock);
+    status->readers_running--;
+    cond_signal (&status->write_cond, &status->lock);
+    lock_release (&status->lock);
+  }
 
   return bytes_read;
 }
@@ -427,27 +441,48 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 {
   const uint8_t *buffer = buffer_;
   off_t bytes_written = 0;
-  bool locked = false;
-  struct lock *lock = lock_for_inode (inode);
+  
+  struct file_synch_status *status = status_for_inode (inode); 
 
   if (inode->deny_write_cnt)
     return 0;
+
+  bool extending = false;
+  
+  if (status) {
+    lock_acquire (&status->lock);
+    printf("write %p. status: %d, %d, %d\n", inode, status->readers_running,
+                                                    status->writers_waiting, 
+                                                    offset + size - inode->data.length);
+    if (offset + size > inode->data.length) {
+      status->writers_waiting++;
+      while (status->readers_running != 0) 
+        cond_wait (&status->write_cond, &status->lock);
+
+      status->writers_waiting--;
+      extending = true;
+      
+      int i = DIV_ROUND_UP (inode->data.length, BLOCK_SECTOR_SIZE) + 1;
+      for(; i <= DIV_ROUND_UP (offset + size, BLOCK_SECTOR_SIZE); i++) {
+        if (allocate_block (inode, i) == NO_BLOCK)
+          PANIC ("could not allocate file sector");
+      }
+    } else {
+      while (status->writers_waiting != 0) 
+        cond_wait (&status->read_cond, &status->lock);
+      status->readers_running++;
+      lock_release (&status->lock);
+    }
+  } else {
+    if (!inode_isdir (inode) != 0 && offset + size > inode->data.length) 
+      PANIC ("extending unlocked file");
+  }
 
   while (size > 0) 
     {
       /* Sector to write, starting byte offset within sector. */
       block_sector_t next;
       block_sector_t sector_idx = byte_to_sector (inode, offset, &next);
-      if (sector_idx == NO_BLOCK) {
-        if (lock != NULL && !locked) {
-          lock_acquire (lock);
-          locked = true;
-        }
-        sector_idx = allocate_block (inode, offset / BLOCK_SECTOR_SIZE);
-
-        if (sector_idx == NO_BLOCK)
-          PANIC ("could not allocate file sector");
-      }
       
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
@@ -466,18 +501,22 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       offset += chunk_size;
       bytes_written += chunk_size;
     }
-  //free (bounce);
-  if (inode_length (inode) < offset - 1) {
-    if (lock != NULL && !locked) {
-      lock_acquire (lock);
-      locked = true;
+ 
+  if (status) {
+    if (extending) {
+      inode->data.length = offset;
+      block_write_cache (fs_device, inode->sector, &inode->data,
+                         0, BLOCK_SECTOR_SIZE, true, -1);
+      cond_broadcast (&status->read_cond, &status->lock);
+      lock_release (&status->lock);
+    } else {
+      lock_acquire (&status->lock);
+      status->readers_running--;
+      cond_signal (&status->write_cond, &status->lock);
+      lock_release (&status->lock);
     }
-    inode->data.length = offset;
-    block_write_cache (fs_device, inode->sector, &inode->data,
-                       0, BLOCK_SECTOR_SIZE, true, -1);
- }
+  }
 
-  if (lock != NULL && locked) lock_release (lock);
   return bytes_written;
 }
 

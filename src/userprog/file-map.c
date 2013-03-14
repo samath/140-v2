@@ -10,7 +10,7 @@ struct fpm_info {
   struct file *fp;
   int num_active;       /* Number of open file descriptors for fp. */
   struct fpm_info* next;
-  struct lock file_lock;
+  struct file_synch_status status;
 };
 
 /* Struct uniquely represents an open file descriptor. */
@@ -35,25 +35,8 @@ static int hash_inode (struct inode *i);
 
 static struct fdm_info* fdm_from_fd (int fd);
 static struct fpm_info* fpm_from_fp (struct file *fp);
-static struct file* fp_from_fd (int fd);
 static void free_fdm (struct fdm_info *fdm);
 
-
-/* Convert an fpm into a struct containing a file and corresponding lock.
-   If fpm == NULL (which represents a number of error conditions), 
-   initialize all fields to NULL. */
-static struct file_with_lock get_file_with_lock (struct fpm_info *fpm) 
-{
-  struct file_with_lock fwl;
-  if (fpm) {
-    fwl.fp = fpm->fp;
-    fwl.lock = &(fpm->file_lock);
-  } else {
-    fwl.fp = NULL; 
-    fwl.lock = NULL;
-  }
-  return fwl;
-}
 
 #define FD_TABLE_SIZE 32
 #define FP_TABLE_SIZE 32
@@ -154,7 +137,7 @@ static struct fpm_info* fpm_from_fp (struct file *fp)
   return NULL;
 }
 
-struct lock *lock_for_inode (struct inode *inode)
+struct file_synch_status *status_for_inode (struct inode *inode)
 {
   lock_acquire (&(fm->file_map_lock));
   struct fpm_info *start = fm->fp_map[hash_inode(inode)];
@@ -163,24 +146,17 @@ struct lock *lock_for_inode (struct inode *inode)
     start = start->next;
   }
   lock_release (&(fm->file_map_lock));
-  return start == NULL ? NULL : &start->file_lock;
+  return start == NULL ? NULL : &start->status;
 }
 
 /*  Use the FD_TABLE to check if fd is valid. If so, return the file. */
-static struct file* fp_from_fd (int fd) 
+struct file* fp_from_fd (int fd) 
 {
+  lock_acquire (&(fm->file_map_lock));  
   struct fdm_info* fdm = fdm_from_fd(fd);
+  lock_release (&(fm->file_map_lock));  
   if(fdm) return fdm->fp;
   else return NULL;
-}
-
-/* Return file and lock for a given file descriptor. */
-struct file_with_lock fwl_from_fd (int fd) 
-{
-  lock_acquire (&(fm->file_map_lock));
-  struct fpm_info *fpm  = fpm_from_fp(fp_from_fd(fd));
-  lock_release (&(fm->file_map_lock));
-  return get_file_with_lock (fpm);
 }
 
 /* Finds the corresponding entry for fp in the fp_map.
@@ -206,7 +182,13 @@ int get_new_fd (struct file *fp)
     result->fp = fp;
     result->num_active = 0;
     result->next = fm->fp_map[hash_file(fp)];
-    lock_init (&(result->file_lock));
+   
+    lock_init (&(result->status.lock));
+    result->status.writers_waiting = 0;
+    result->status.readers_running = 0;
+    cond_init (&(result->status.read_cond));
+    cond_init (&(result->status.write_cond));
+    
     fm->fp_map[hash_file(fp)] = result;
   }
 

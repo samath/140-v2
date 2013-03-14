@@ -277,11 +277,9 @@ static int syscall_open (const char *file)
 
 static int syscall_filesize (int fd)
 { 
-  struct file_with_lock fwl = fwl_from_fd (fd);
-  if (fwl.lock == NULL) return -1;
-  //lock_acquire (fwl.lock);
-  int retval = file_length (fwl.fp);
-  //lock_release (fwl.lock);
+  struct file* fp = fp_from_fd (fd);
+  if (fp == NULL) return -1;
+  int retval = file_length (fp);
   return retval;
 }
 
@@ -294,13 +292,10 @@ static int syscall_read (int fd, void *buffer, unsigned size)
     return 0;
   }
     
-  struct file_with_lock fwl = fwl_from_fd (fd);
-
+  struct file* fp = fp_from_fd (fd);
   int retval = -1;
-  if (fwl.fp) {
-    //lock_acquire (fwl.lock);
-    retval = file_read (fwl.fp, buffer, size);
-    //lock_release (fwl.lock);
+  if (fp) {
+    retval = file_read (fp, buffer, size);
   }
 
   return retval;
@@ -319,13 +314,10 @@ static int syscall_write (int fd, const void *buffer, unsigned size)
     return 0;
   }
 
-  struct file_with_lock fwl = fwl_from_fd (fd);
-
+  struct file *fp = fp_from_fd (fd);
   int retval = -1;
-  if (fwl.fp) {
-    //lock_acquire (fwl.lock);
-    retval = file_write (fwl.fp, buffer, size);
-    //lock_release (fwl.lock);
+  if (fp) {
+    retval = file_write (fp, buffer, size);
   }
 
   return retval;
@@ -333,26 +325,22 @@ static int syscall_write (int fd, const void *buffer, unsigned size)
 
 static void syscall_seek (int fd, unsigned position)
 {
-  struct file_with_lock fwl = fwl_from_fd (fd);
-  if (fwl.lock == NULL) {
+  struct file *fp = fp_from_fd (fd);
+  if (fp == NULL) {
     syscall_exit (-1);
     return;
   }
-  //lock_acquire (fwl.lock);
-  file_seek (fwl.fp, position);
-  //lock_release (fwl.lock);
+  file_seek (fp, position);
 }
 
 static unsigned syscall_tell (int fd) 
 {
-  struct file_with_lock fwl = fwl_from_fd (fd);
-  if (fwl.lock == NULL) {
+  struct file *fp = fp_from_fd (fd);
+  if (fp == NULL) {
     syscall_exit (-1);
     return 1;
   }
-  //lock_acquire (fwl.lock);
-  unsigned retval = file_tell (fwl.fp);
-  //lock_release (fwl.lock);
+  unsigned retval = file_tell (fp);
   return retval;
 }
 
@@ -379,16 +367,16 @@ static bool syscall_readdir (int fd, char *name)
 
 static bool syscall_isdir (int fd)
 {
-  struct file_with_lock fwl = fwl_from_fd (fd);
-  if (fwl.lock == NULL) return false;
-  return inode_isdir (file_get_inode (fwl.fp));
+  struct file *fp = fp_from_fd (fd);
+  if (fp == NULL) return false;
+  return inode_isdir (file_get_inode (fp));
 }
 
 static int syscall_inumber (int fd)
 {
-  struct file_with_lock fwl = fwl_from_fd (fd);
-  if (fwl.lock == NULL) return -1;
-  return inode_get_inumber (file_get_inode (fwl.fp));
+  struct file *fp = fp_from_fd (fd);
+  if (fp == NULL) return -1;
+  return inode_get_inumber (file_get_inode (fp));
 }
 
 

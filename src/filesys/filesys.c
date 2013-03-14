@@ -59,6 +59,7 @@ filesys_create (const char *path, off_t initial_size, bool isdir)
   char buf[len + 1];
   strlcpy (buf, path, len + 1); 
 
+  //printf ("create %s\n", path);
   
   /* Identify the file and the directory components,
      as well as the sector of the containing dir. */
@@ -74,9 +75,11 @@ filesys_create (const char *path, off_t initial_size, bool isdir)
     if ((dir_sector = dir_lookup_recursive (buf)) == -1)
       return false;
     f++;
-  } else
+  } else {
     dir_sector = thread_current ()->wd;
-
+    if (*f == '/')
+      f++;
+  }
 
   /* Add the new file/dir. */
   struct dir *dir = dir_open (inode_open (dir_sector));
@@ -86,6 +89,8 @@ filesys_create (const char *path, off_t initial_size, bool isdir)
                   && dir_add (dir, f, file_sector));
   if (!success && file_sector != 0) 
     free_map_release (file_sector, 1);
+
+
   dir_close (dir);
 
   return success;

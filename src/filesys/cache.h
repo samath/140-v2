@@ -6,8 +6,6 @@
 
 #define CACHE_SIZE 64
 
-
-
 /* An entry in the cache. Contains a block worth of data from disk */
 struct cache_entry
 {
@@ -23,11 +21,12 @@ struct cache_entry
   struct condition cond;         //Signals threads waiting on this entry
 };
 
+/* A pending disk IO order to read in a subsequent block */
 struct readahead_order
 {
-  block_sector_t block_num;
-  struct block *fs;
-  struct list_elem elem;
+  block_sector_t block_num;  //The block of the data to be read in
+  struct block *fs;          //The file system blocks
+  struct list_elem elem;     //Used to add this order to any other orders
 };
 
 void cache_init (void);

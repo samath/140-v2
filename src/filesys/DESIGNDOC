@@ -8,9 +8,9 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+Thomas Shepherd <shepert@stanford.edu>
+Sam Keller <samath@stanford.edu>
+Lawrence Xing <lxing@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -21,9 +21,9 @@ FirstName LastName <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-FirstName LastName: contribution
-FirstName LastName: contribution
-FirstName LastName: contribution
+Thomas Shepherd: buffer cache
+Sam Keller: indexed + extensible files
+Lawrence Xing: subdirectories, syscalls 
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
@@ -81,6 +81,9 @@ FirstName LastName: contribution
 
 >> B2: Describe your code for traversing a user-specified path.  How
 >> do traversals of absolute and relative paths differ?
+
+This is implemented in dir_lookup_recursive, which updates the
+variable 'sector' repeatedly as elements of
 
 ---- SYNCHRONIZATION ----
 

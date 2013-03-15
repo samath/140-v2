@@ -1,16 +1,17 @@
 #include "userprog/file-map.h"
 #include "filesys/file.h"
+#include "filesys/inode.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
 
 static struct file_map *fm;
 
-static struct file_synch_status dir_synch;
 static struct file_synch_status free_map_synch;
 
 /* Struct uniquely represents an open file. */
 struct fpm_info {
   struct file *fp;
+  struct inode *inode;
   int num_active;       /* Number of open file descriptors for fp. */
   struct fpm_info* next;
   struct file_synch_status status;
@@ -31,6 +32,8 @@ struct file_map {
   struct lock file_map_lock;
 };
 
+static struct file_synch_status *add_dir_entry (struct inode *inode);
+
 static int hash (void *addr);
 static int hash_file (struct file *);
 static int hash_inode (struct inode *i);
@@ -40,8 +43,8 @@ static struct fpm_info* fpm_from_fp (struct file *fp);
 static void free_fdm (struct fdm_info *fdm);
 
 
-#define FD_TABLE_SIZE 32
-#define FP_TABLE_SIZE 32
+#define FD_TABLE_SIZE 128
+#define FP_TABLE_SIZE 128
 #define BASE_FD 2
 
 /* Called in syscall_init to set up empty hash maps. */
@@ -61,14 +64,8 @@ void init_file_map ()
   fm->next_fd = BASE_FD;
   lock_init (&(fm->file_map_lock));
 
-  lock_init (&dir_synch.lock);
-  lock_init (&dir_synch.dir_lock);
-  dir_synch.writers_waiting = 0;
-  dir_synch.readers_running = 0;
-  cond_init (&dir_synch.read_cond);
-  cond_init (&dir_synch.write_cond);
-
   lock_init (&free_map_synch.lock);
+  lock_init (&free_map_synch.dir_lock);
   free_map_synch.writers_waiting = 0;
   free_map_synch.readers_running = 0;
   cond_init (&free_map_synch.read_cond);
@@ -159,11 +156,13 @@ struct file_synch_status *status_for_inode (struct inode *inode)
   lock_acquire (&(fm->file_map_lock));
   struct fpm_info *start = fm->fp_map[hash_inode(inode)];
   while (start) {
-    if (file_get_inode (start->fp) == inode) break;
+    if (start->inode == inode) break;
     start = start->next;
   }
+  struct file_synch_status *retval = 
+      (start == NULL) ? add_dir_entry (inode) : &start->status;
   lock_release (&(fm->file_map_lock));
-  return start == NULL ? &dir_synch : &start->status;
+  return retval;
 }
 
 /*  Use the FD_TABLE to check if fd is valid. If so, return the file. */
@@ -175,6 +174,29 @@ struct file* fp_from_fd (int fd)
   if(fdm) return fdm->fp;
   else return NULL;
 }
+
+static struct file_synch_status *add_dir_entry (struct inode *inode) 
+{
+  struct fpm_info *dir_entry = malloc(sizeof(struct fpm_info));
+  if (dir_entry == NULL) 
+    PANIC ("could not allocate lock for directory");
+
+  dir_entry->inode = inode;
+  dir_entry->next = fm->fp_map[hash_inode (inode)];
+ 
+  struct file_synch_status *status = &dir_entry->status;
+
+  lock_init (&(status->lock));
+  lock_init (&(status->dir_lock));
+  status->writers_waiting = 0;
+  status->readers_running = 0;
+  cond_init (&(status->read_cond));
+  cond_init (&(status->write_cond));
+  
+  fm->fp_map[hash_inode (inode)] = dir_entry;
+  return status;
+}
+
 
 /* Finds the corresponding entry for fp in the fp_map.
    Increments num_active, or creates a new entry if none exists.
@@ -197,6 +219,7 @@ int get_new_fd (struct file *fp)
     }
     // No existing file descriptors, initialize new fpm_info
     result->fp = fp;
+    result->inode = file_get_inode (fp);
     result->num_active = 0;
     result->next = fm->fp_map[hash_file(fp)];
    

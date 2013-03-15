@@ -422,15 +422,15 @@ off_t
 inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) 
 {
   struct file_synch_status *status = status_for_inode (inode);
-  if (status) {
-    lock_acquire (&status->lock);
-    /* Yield to writers. */
-    while (status->writers_waiting != 0) 
-      cond_wait (&status->read_cond, &status->lock);
-    /* Increment reader count. */
-    status->readers_running++;
-    lock_release (&status->lock);
-  }
+  ASSERT (status);
+  
+  lock_acquire (&status->lock);
+  /* Yield to writers. */
+  while (status->writers_waiting != 0) 
+    cond_wait (&status->read_cond, &status->lock);
+  /* Increment reader count. */
+  status->readers_running++;
+  lock_release (&status->lock);
   
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
@@ -469,13 +469,11 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       bytes_read += chunk_size;
     }
 
-  if (status) {
-    lock_acquire (&status->lock);
-    status->readers_running--;
-    /* Signal a writer to run. */
-    cond_signal (&status->write_cond, &status->lock);
-    lock_release (&status->lock);
-  }
+  lock_acquire (&status->lock);
+  status->readers_running--;
+  /* Signal a writer to run. */
+  cond_signal (&status->write_cond, &status->lock);
+  lock_release (&status->lock);
 
   return bytes_read;
 }
@@ -498,44 +496,43 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   struct file_synch_status *status = status_for_inode (inode); 
   bool extending = false;
   
-  if (status) {
-    lock_acquire (&status->lock);
-    if (offset + size > inode->data.length) {
-      /* File needs to be extended. */
-      status->writers_waiting++;
-      /* Wait for all running readers to finish. */
-      while (status->readers_running != 0) 
-        cond_wait (&status->write_cond, &status->lock);
-      status->writers_waiting--;
-      
-      if (offset + size <= inode->data.length) {
-        status->readers_running++;
-        lock_release (&status->lock);
-      } else {
-        extending = true;
-        
-        /* Calculate first unallocated block. */
-        unsigned i = (inode->data.length % BLOCK_SECTOR_SIZE == 0) ? 
-                          inode->data.length / BLOCK_SECTOR_SIZE : 
-                          inode->data.length / BLOCK_SECTOR_SIZE + 1;
-        unsigned last_block = (offset + size - 1) / BLOCK_SECTOR_SIZE;
-        for(; i <= last_block; i++) {
-          if (allocate_block (inode, i) == NO_BLOCK) {
-            /* Could not allocate block for extension.
-               Limit size to fit within allocated space. */
-            size = i * BLOCK_SECTOR_SIZE - offset;
-            break;
-          }
-        }
-      }
-    } else {
-      /* If writer does not extend, requires same level of 
-         synchronization as reader. */
-      while (status->writers_waiting != 0) 
-        cond_wait (&status->read_cond, &status->lock);
+  ASSERT (status);
+  lock_acquire (&status->lock);
+  if (offset + size > inode->data.length) {
+    /* File needs to be extended. */
+    status->writers_waiting++;
+    /* Wait for all running readers to finish. */
+    while (status->readers_running != 0) 
+      cond_wait (&status->write_cond, &status->lock);
+    status->writers_waiting--;
+    
+    if (offset + size <= inode->data.length) {
       status->readers_running++;
       lock_release (&status->lock);
+    } else {
+      extending = true;
+      
+      /* Calculate first unallocated block. */
+      unsigned i = (inode->data.length % BLOCK_SECTOR_SIZE == 0) ? 
+                        inode->data.length / BLOCK_SECTOR_SIZE : 
+                        inode->data.length / BLOCK_SECTOR_SIZE + 1;
+      unsigned last_block = (offset + size - 1) / BLOCK_SECTOR_SIZE;
+      for(; i <= last_block; i++) {
+        if (allocate_block (inode, i) == NO_BLOCK) {
+          /* Could not allocate block for extension.
+             Limit size to fit within allocated space. */
+          size = i * BLOCK_SECTOR_SIZE - offset;
+          break;
+        }
+      }
     }
+  } else {
+    /* If writer does not extend, requires same level of 
+       synchronization as reader. */
+    while (status->writers_waiting != 0) 
+      cond_wait (&status->read_cond, &status->lock);
+    status->readers_running++;
+    lock_release (&status->lock);
   }
 
   
@@ -564,22 +561,20 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       bytes_written += chunk_size;
     }
  
-  if (status) {
-    if (extending) {
-      /* Update length with offset after while loop terminates. */
-      inode->data.length = offset;
-      /* Write disk_inode back to disk. */
-      block_write_cache (fs_device, inode->sector, &inode->data,
-                         0, BLOCK_SECTOR_SIZE, true, -1);
-      /* Wake all sleeping readers. */
-      cond_broadcast (&status->read_cond, &status->lock);
-      lock_release (&status->lock);
-    } else {
-      lock_acquire (&status->lock);
-      status->readers_running--;
-      cond_signal (&status->write_cond, &status->lock);
-      lock_release (&status->lock);
-    }
+  if (extending) {
+    /* Update length with offset after while loop terminates. */
+    inode->data.length = offset;
+    /* Write disk_inode back to disk. */
+    block_write_cache (fs_device, inode->sector, &inode->data,
+                       0, BLOCK_SECTOR_SIZE, true, -1);
+    /* Wake all sleeping readers. */
+    cond_broadcast (&status->read_cond, &status->lock);
+    lock_release (&status->lock);
+  } else {
+    lock_acquire (&status->lock);
+    status->readers_running--;
+    cond_signal (&status->write_cond, &status->lock);
+    lock_release (&status->lock);
   }
 
   return bytes_written;

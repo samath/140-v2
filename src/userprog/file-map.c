@@ -5,6 +5,8 @@
 
 static struct file_map *fm;
 
+static struct file_synch_status dir_synch;
+
 /* Struct uniquely represents an open file. */
 struct fpm_info {
   struct file *fp;
@@ -28,7 +30,6 @@ struct file_map {
   struct lock file_map_lock;
 };
 
-static struct file_with_lock get_file_with_lock (struct fpm_info *fpm);
 static int hash (void *addr);
 static int hash_file (struct file *);
 static int hash_inode (struct inode *i);
@@ -58,6 +59,12 @@ void init_file_map ()
   for(; j < FD_TABLE_SIZE; j++) fm->fd_map[j] = NULL;
   fm->next_fd = BASE_FD;
   lock_init (&(fm->file_map_lock));
+
+  lock_init (&dir_synch.lock);
+  dir_synch.writers_waiting = 0;
+  dir_synch.readers_running = 0;
+  cond_init (&dir_synch.read_cond);
+  cond_init (&dir_synch.write_cond);
 }
 
 void destroy_file_map () 
@@ -146,7 +153,7 @@ struct file_synch_status *status_for_inode (struct inode *inode)
     start = start->next;
   }
   lock_release (&(fm->file_map_lock));
-  return start == NULL ? NULL : &start->status;
+  return start == NULL ? &dir_synch : &start->status;
 }
 
 /*  Use the FD_TABLE to check if fd is valid. If so, return the file. */

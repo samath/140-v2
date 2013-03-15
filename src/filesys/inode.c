@@ -228,7 +228,6 @@ inode_create (block_sector_t sector, off_t length, bool isdir)
       int i = 0;
       for(; i < TOTAL_BLOCKS; i++) disk_inode->blocks[i] = NO_BLOCK;
 
-      // Write only the disk_inode, allocate pages lazily
       block_write_cache (fs_device, sector, disk_inode, 0,
                          BLOCK_SECTOR_SIZE, true, -1);
       success = true;
@@ -442,18 +441,14 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   const uint8_t *buffer = buffer_;
   off_t bytes_written = 0;
   
-  struct file_synch_status *status = status_for_inode (inode); 
-
   if (inode->deny_write_cnt)
     return 0;
 
+  struct file_synch_status *status = status_for_inode (inode); 
   bool extending = false;
   
   if (status) {
     lock_acquire (&status->lock);
-    printf("write %p. status: %d, %d, %d\n", inode, status->readers_running,
-                                                    status->writers_waiting, 
-                                                    offset + size - inode->data.length);
     if (offset + size > inode->data.length) {
       status->writers_waiting++;
       while (status->readers_running != 0) 
@@ -462,8 +457,10 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       status->writers_waiting--;
       extending = true;
       
-      int i = DIV_ROUND_UP (inode->data.length, BLOCK_SECTOR_SIZE) + 1;
-      for(; i <= DIV_ROUND_UP (offset + size, BLOCK_SECTOR_SIZE); i++) {
+      unsigned i = (inode->data.length % BLOCK_SECTOR_SIZE == 0) ? 
+                   inode->data.length / BLOCK_SECTOR_SIZE : inode->data.length / BLOCK_SECTOR_SIZE + 1;
+      unsigned last_block = (offset + size - 1) / BLOCK_SECTOR_SIZE;
+      for(; i <= last_block; i++) {
         if (allocate_block (inode, i) == NO_BLOCK)
           PANIC ("could not allocate file sector");
       }

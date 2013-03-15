@@ -7,6 +7,7 @@
 #include "userprog/process.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/directory.h"
 #include "lib/syscall-nr.h"
 #include "lib/user/syscall.h"
 #include "devices/shutdown.h"
@@ -364,9 +365,9 @@ static bool syscall_mkdir (const char *dir)
 
 static bool syscall_readdir (int fd, char *name)
 {
-  struct file_with_lock fwl = fwl_from_fd (fd);
-  if (fwl.lock == NULL) return false;
-  bool success = dir_readdir (dir_shim_file (fwl.fp), name);
+  struct file *fp = fp_from_fd (fd);
+  if (fp == NULL) return false;
+  bool success = dir_readdir (dir_shim_file (fp), name);
   return success;
 }
 

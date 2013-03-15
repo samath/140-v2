@@ -140,7 +140,6 @@ filesys_remove (const char *path)
     f--;
 
   block_sector_t dir_sector;
-  block_sector_t file_sector;
 
   if (f != &buf[0]) {
     *f = '\0'; 

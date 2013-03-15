@@ -6,7 +6,9 @@
 #include "filesys/inode.h"
 #include "lib/string.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 #include "threads/thread.h"
+#include "userprog/file-map.h"
 
 /* A directory. */
 struct dir 
@@ -22,6 +24,24 @@ struct dir_entry
     char name[NAME_MAX + 1];            /* Null terminated file name. */
     bool in_use;                        /* In use or free? */
   };
+
+static void
+dir_lock (const struct dir *dir)
+{
+  if (dir->inode == NULL) return;
+  struct file_synch_status *fss = status_for_inode (dir->inode);
+  if (fss == NULL) return;
+  lock_acquire (&fss->dir_lock);
+}
+
+static void
+dir_unlock (const struct dir *dir)
+{
+  if (dir->inode == NULL) return;
+  struct file_synch_status *fss = status_for_inode (dir->inode);
+  if (fss == NULL) return;
+  lock_release (&fss->dir_lock);
+}
 
 /* Creates a directory with space for ENTRY_CNT entries in the
    given SECTOR.  Returns true if successful, false on failure. */
@@ -146,6 +166,7 @@ bool
 dir_lookup (const struct dir *dir, const char *name,
             struct inode **inode) 
 {
+  dir_lock (dir);
   struct dir_entry e;
 
   ASSERT (dir != NULL);
@@ -156,6 +177,7 @@ dir_lookup (const struct dir *dir, const char *name,
   else
     *inode = NULL;
 
+  dir_unlock (dir);
   return *inode != NULL;
 }
 
@@ -206,7 +228,9 @@ dir_lookup_recursive (const char *path)
       *next = '\0';
     
     dir.inode = inode_open (sector);
+    dir_lock (&dir);
     bool success = lookup (&dir, c, &entry, NULL);
+    dir_unlock (&dir);
 
     if (!success)
       return DIR_LOOKUP_ERROR;
@@ -231,6 +255,7 @@ dir_lookup_recursive (const char *path)
 bool
 dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
 {
+  dir_lock (dir);
   struct dir_entry e;
   off_t ofs;
   bool success = false;
@@ -265,6 +290,7 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
   success = inode_write_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
 
  done:
+  dir_unlock (dir);
   return success;
 }
 
@@ -274,6 +300,7 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
 bool
 dir_remove (struct dir *dir, const char *name) 
 {
+  dir_lock (dir);
   struct dir_entry e;
   struct inode *inode = NULL;
   bool success = false;
@@ -305,6 +332,7 @@ dir_remove (struct dir *dir, const char *name)
   success = true;
 
  done:
+  dir_unlock (dir);
   inode_close (inode);
   return success;
 }

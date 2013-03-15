@@ -9,6 +9,7 @@ struct file_map;
 
 struct file_synch_status {
   struct lock lock;
+  struct lock dir_lock;
   unsigned writers_waiting;
   unsigned readers_running;
   struct condition read_cond;

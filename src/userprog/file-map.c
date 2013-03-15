@@ -62,6 +62,7 @@ void init_file_map ()
   lock_init (&(fm->file_map_lock));
 
   lock_init (&dir_synch.lock);
+  lock_init (&dir_synch.dir_lock);
   dir_synch.writers_waiting = 0;
   dir_synch.readers_running = 0;
   cond_init (&dir_synch.read_cond);
@@ -200,6 +201,7 @@ int get_new_fd (struct file *fp)
     result->next = fm->fp_map[hash_file(fp)];
    
     lock_init (&(result->status.lock));
+    lock_init (&(result->status.dir_lock));
     result->status.writers_waiting = 0;
     result->status.readers_running = 0;
     cond_init (&(result->status.read_cond));

@@ -6,6 +6,7 @@
 static struct file_map *fm;
 
 static struct file_synch_status dir_synch;
+static struct file_synch_status free_map_synch;
 
 /* Struct uniquely represents an open file. */
 struct fpm_info {
@@ -65,6 +66,12 @@ void init_file_map ()
   dir_synch.readers_running = 0;
   cond_init (&dir_synch.read_cond);
   cond_init (&dir_synch.write_cond);
+
+  lock_init (&free_map_synch.lock);
+  free_map_synch.writers_waiting = 0;
+  free_map_synch.readers_running = 0;
+  cond_init (&free_map_synch.read_cond);
+  cond_init (&free_map_synch.write_cond);
 }
 
 void destroy_file_map () 
@@ -146,6 +153,8 @@ static struct fpm_info* fpm_from_fp (struct file *fp)
 
 struct file_synch_status *status_for_inode (struct inode *inode)
 {
+  if (inode_get_inumber (inode) == FREE_MAP_SECTOR) return &free_map_synch;
+
   lock_acquire (&(fm->file_map_lock));
   struct fpm_info *start = fm->fp_map[hash_inode(inode)];
   while (start) {

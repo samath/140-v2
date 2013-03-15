@@ -470,11 +470,9 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       status->readers_running++;
       lock_release (&status->lock);
     }
-  } else {
-    if (!inode_isdir (inode) != 0 && offset + size > inode->data.length) 
-      PANIC ("extending unlocked file");
   }
 
+  
   while (size > 0) 
     {
       /* Sector to write, starting byte offset within sector. */

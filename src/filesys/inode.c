@@ -461,8 +461,10 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
                    inode->data.length / BLOCK_SECTOR_SIZE : inode->data.length / BLOCK_SECTOR_SIZE + 1;
       unsigned last_block = (offset + size - 1) / BLOCK_SECTOR_SIZE;
       for(; i <= last_block; i++) {
-        if (allocate_block (inode, i) == NO_BLOCK)
-          PANIC ("could not allocate file sector");
+        if (allocate_block (inode, i) == NO_BLOCK) {
+          size = i * BLOCK_SECTOR_SIZE - offset;
+          break;
+        }
       }
     } else {
       while (status->writers_waiting != 0) 

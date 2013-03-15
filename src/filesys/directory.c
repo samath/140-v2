@@ -115,6 +115,29 @@ lookup (const struct dir *dir, const char *name,
   return false;
 }
 
+/* Returns true iff DIR contains only the entries
+   '.' and '..' */
+bool
+dir_empty (const struct dir *dir)
+{
+  struct dir_entry e;
+  size_t ofs;
+
+  ASSERT (dir != NULL);
+
+  for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+       ofs += sizeof e) 
+  {
+    if (!e.in_use)
+      continue;
+    
+    if (strcmp (e.name, ".") != 0 && strcmp (e.name, "..") != 0)
+      return false;
+  }
+  return true;
+}
+
+
 /* Searches DIR for a file with the given NAME
    and returns true if one exists, false otherwise.
    On success, sets *INODE to an inode for the file, otherwise to
@@ -282,18 +305,30 @@ dir_remove (struct dir *dir, const char *name)
   return success;
 }
 
+
+/* Converts a file pointer from the file map into a dir
+   pointer for dir_readdir. */
+struct dir *
+dir_shim_file (struct file *fp)
+{
+  return (struct dir *) fp;
+}
+
 /* Reads the next directory entry in DIR and stores the name in
    NAME.  Returns true if successful, false if the directory
    contains no more entries. */
 bool
 dir_readdir (struct dir *dir, char name[NAME_MAX + 1])
 {
+  if (dir == NULL || !inode_isdir (dir->inode))
+    return false;
+
   struct dir_entry e;
 
   while (inode_read_at (dir->inode, &e, sizeof e, dir->pos) == sizeof e) 
     {
       dir->pos += sizeof e;
-      if (e.in_use)
+      if (e.in_use && strcmp (e.name, ".") && strcmp (e.name, ".."))
         {
           strlcpy (name, e.name, NAME_MAX + 1);
           return true;

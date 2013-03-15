@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "devices/block.h"
+#include "filesys/file.h"
 
 /* Maximum length of a file name component.
    This is the traditional UNIX maximum length.
@@ -32,5 +33,6 @@ bool dir_remove (struct dir *, const char *name);
 bool dir_readdir (struct dir *, char name[NAME_MAX + 1]);
 
 block_sector_t dir_lookup_recursive (const char *path);
+struct dir *dir_shim_file (struct file *fp);
 
 #endif /* filesys/directory.h */

@@ -71,9 +71,11 @@ static int syscall_argc[] =
     2,  // Seek
     1,  // Tell
     1,  // Close
+    2,  // Mmap
+    2,  // Munmap
     1,  // Chdir
     1,  // Mkdir
-    1,  // Readdir
+    2,  // Readdir
     1,  // Isdir
     1,  // Inumber
   };
@@ -362,7 +364,10 @@ static bool syscall_mkdir (const char *dir)
 
 static bool syscall_readdir (int fd, char *name)
 {
-  return true;
+  struct file_with_lock fwl = fwl_from_fd (fd);
+  if (fwl.lock == NULL) return false;
+  bool success = dir_readdir (dir_shim_file (fwl.fp), name);
+  return success;
 }
 
 static bool syscall_isdir (int fd)

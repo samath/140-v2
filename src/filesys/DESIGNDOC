@@ -38,13 +38,78 @@ Lawrence Xing: subdirectories, syscalls
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+
+Struct used to store synchronization data for managing writes and reads.
+
+    struct file_synch_status
+      {
+        struct lock lock;
+        unsigned writers_waiting;
+        unsigned readersr_running;
+        struct condition read_cond;
+        struct condition write_cond;
+      };
+
+Replaced the unused space in inode_disk with a block table.  Deleted the 
+start block_sector_t.
+
+    struct inode_disk
+      {
+        off_t length;
+        unsigned isdir;
+        unsigned magic;
+        block_sector_t blocks[TOTAL_BLOCKS];
+      };
+
+Constants defining the breakdown of the block table.  The maximum size + 
+optimal distribution can be modified here.
+
+    #define DIRECT_BLOCKS 64
+    #define INDIRECT_BLOCKS 60
+    #define DOUBLY_INDIRECT 1
+    #define TOTAL_BLOCKS (DIRECT_BLOCKS + INDIRECT_BLOCKS + DOUBLY_INDIRECT)
+    #define INDIRECT_SIZE (BLOCK_SECTOR_SIZE / sizeof(block_sector_t))
+    #define MAX_SIZE (1 << 23)
+
+
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
+
+
+With the constants as defined above, the maximum supported file size is
+    BLOCK_SECTOR_SIZE * (DIRECT_BLOCKS +
+                         INDIRECT_BLOCKS * INDIRECT_SIZE +
+                         DOUBLY_INDIRECT * INDIRECT_SIZE * INDIRECT_SIZE).
+Filling in the values, this gives 24,128 blocks and 12,353,536 bytes.
+This is > 12MB, which is significantly larger then the maximum size of 
+  the file system.
+
+The existing code assumes that INDIRECT_BLOCK = 1, but it could easily 
+be modified to support much larger files.
+
+
 
 ---- SYNCHRONIZATION ----
 
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
+
+
+Each file has a lock and some corresponding metadata stored along with 
+  its entry in the file-map, which can be accessed using an inode*.
+
+In a call to inode_write_at, the thread acquires the corresponding lock,
+  and then checks if the write will require file extension.  If so, the 
+  lock is held for the duration of the write, until all blocks are allocated,
+  data is written, and the length & disk_inode are updated on disk.
+
+Once all readers have completed, the process checks once more that extension
+  is still necessary before proceeding to allocate blocks.
+
+At any given time, this scheme ensures that at most one process is extending
+  a file at the time.  Furthermore, no blocks are allocated until acquiring
+  a file-specific lock and checking that extension is necessary.
+
 
 >> A4: Suppose processes A and B both have file F open, both
 >> positioned at end-of-file.  If A reads and B writes F at the same
@@ -53,12 +118,24 @@ Lawrence Xing: subdirectories, syscalls
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
+
+Using the same file-specific lock as in the previous problem, a process that
+  is extending a file will wait for all readers to complete.  Similarly, 
+  once extension has started, no process can read from the file until it has
+  completed.  This means that once the reading thread is able to reacquire 
+  the lock, the write has been propagated to disk (or the buffer cache), and 
+  so it is impossible to read incomplete data.
+
+
 >> A5: Explain how your synchronization design provides "fairness".
 >> File access is "fair" if readers cannot indefinitely block writers
 >> or vice versa.  That is, many processes reading from a file cannot
 >> prevent forever another process from writing the file, and many
 >> processes writing to a file cannot prevent another process forever
 >> from reading the file.
+
+
+
 
 ---- RATIONALE ----
 
@@ -67,6 +144,27 @@ Lawrence Xing: subdirectories, syscalls
 >> indirect blocks?  If not, why did you choose an alternative inode
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
+
+
+The inode is implemented using a multilevel index.
+Given that a single full doubly indirect block supports files up to 
+the maximum size of the file system, it is clear that we need at most 1;
+however, it is impossible to support the full size without one, so 
+(again using the constants above) we must have DOUBLY_INDIRECT = 1.
+
+I distributed the remaining space in the disk_inode approximately evenly 
+between direct blocks and indirect blocks.  Since we have a doubly 
+indirect block, there is no space concern.  Using a balanced division 
+allows efficient support for a range of files; this structure allows files
+of size at most 32 kB to be represented without using indirect blocks ever.
+By including a significant number of indirect blocks, this inode arrangement
+can support files up to ~4MB without requiring the doubly indirect block.
+
+Note that if this filesystem is being used for a specific purpose which 
+expects files of a certain size to appear frequently, these numbers can be 
+easily adjusted to optimize for these values.
+
+
 
 			    SUBDIRECTORIES
 			    ==============

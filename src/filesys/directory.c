@@ -137,15 +137,15 @@ lookup (const struct dir *dir, const char *name,
 
 /* Returns true iff DIR contains only the entries
    '.' and '..' */
-bool
-dir_empty (const struct dir *dir)
+static bool
+dir_empty (struct inode *dir)
 {
   struct dir_entry e;
   size_t ofs;
 
   ASSERT (dir != NULL);
 
-  for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+  for (ofs = 0; inode_read_at (dir, &e, sizeof e, ofs) == sizeof e;
        ofs += sizeof e) 
   {
     if (!e.in_use)
@@ -319,7 +319,8 @@ dir_remove (struct dir *dir, const char *name)
 
   /* Open inode. */
   inode = inode_open (e.inode_sector);
-  if (inode == NULL || (inode_isdir (inode) && inode_open_cnt (inode) > 1))
+  if (inode == NULL || (inode_isdir (inode) && 
+    (inode_open_cnt (inode) > 1 || !dir_empty (inode))))
     goto done;
 
   /* Erase directory entry. */

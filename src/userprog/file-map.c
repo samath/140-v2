@@ -32,6 +32,15 @@ struct file_map {
   struct lock file_map_lock;
 };
 
+static void init_file_synch (struct file_synch_status *fss) {
+ lock_init (&fss->lock);
+ lock_init (&fss->dir_lock);
+ fss->writers_waiting = 0;
+ fss->readers_running = 0;
+ cond_init (&fss->read_cond);
+ cond_init (&fss->write_cond);
+}
+
 static struct file_synch_status *add_dir_entry (struct inode *inode);
 
 static int hash (void *addr);
@@ -64,12 +73,7 @@ void init_file_map ()
   fm->next_fd = BASE_FD;
   lock_init (&(fm->file_map_lock));
 
-  lock_init (&free_map_synch.lock);
-  lock_init (&free_map_synch.dir_lock);
-  free_map_synch.writers_waiting = 0;
-  free_map_synch.readers_running = 0;
-  cond_init (&free_map_synch.read_cond);
-  cond_init (&free_map_synch.write_cond);
+  init_file_synch (&free_map_synch);
 }
 
 void destroy_file_map () 
@@ -143,7 +147,7 @@ static struct fpm_info* fpm_from_fp (struct file *fp)
   if (fp == NULL) return NULL;
   struct fpm_info * start = fm->fp_map[hash_file(fp)];
   while(start) {
-    if(start->fp == fp) return start;
+    if(file_get_inode(start->fp) == file_get_inode(fp)) return start;
     start = start->next;
   }
   return NULL;
@@ -183,18 +187,10 @@ static struct file_synch_status *add_dir_entry (struct inode *inode)
 
   dir_entry->inode = inode;
   dir_entry->next = fm->fp_map[hash_inode (inode)];
- 
-  struct file_synch_status *status = &dir_entry->status;
-
-  lock_init (&(status->lock));
-  lock_init (&(status->dir_lock));
-  status->writers_waiting = 0;
-  status->readers_running = 0;
-  cond_init (&(status->read_cond));
-  cond_init (&(status->write_cond));
+  init_file_synch (&dir_entry->status);
   
   fm->fp_map[hash_inode (inode)] = dir_entry;
-  return status;
+  return &dir_entry->status;
 }
 
 
@@ -222,13 +218,7 @@ int get_new_fd (struct file *fp)
     result->inode = file_get_inode (fp);
     result->num_active = 0;
     result->next = fm->fp_map[hash_file(fp)];
-   
-    lock_init (&(result->status.lock));
-    lock_init (&(result->status.dir_lock));
-    result->status.writers_waiting = 0;
-    result->status.readers_running = 0;
-    cond_init (&(result->status.read_cond));
-    cond_init (&(result->status.write_cond));
+    init_file_synch (&result->status); 
     
     fm->fp_map[hash_file(fp)] = result;
   }

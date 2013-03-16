@@ -209,14 +209,103 @@ variable 'sector' repeatedly as elements of
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct cache_entry
+{
+  char data[BLOCK_SECTOR_SIZE];
+  block_sector_t block_num;
+  block_sector_t readahead;
+  int handlers;
+  bool metadata;
+  int priority;
+  bool dirty;
+  struct block *fs;
+
+  struct condition cond;
+};
+
+An entry in the buffer cache which contains a block worth of disk data and
+metadata used for synchronization and eviction.
+
+struct readahead_order
+{
+  block_sector_t block_num;
+  struct block *fs;
+  struct list_elem elem;
+};
+
+A pending disk IO order to read in a subsequent block by a background thread.
+
+static struct cache_entry cache[CACHE_SIZE];
+
+The actual cache in memory. We used an array because the cache is a fixed size.
+
+static struct lock cache_lock;
+
+A single lock for making changes to entries in the cache. This lock is not held
+for any disk IO's.
+
+static struct lock readahead_lock;
+static struct condition readahead_wait;
+static struct list readahead_list;
+
+A list to hold read-ahead orders. Uses a lock and condition variable to avoid
+busy waiting by the background thread.
+
+static int clock_hand;
+
+The clock_hand for the clock eviction algorithm.
+
 ---- ALGORITHMS ----
 
 >> C2: Describe how your cache replacement algorithm chooses a cache
 >> block to evict.
 
+We implemented a clock algorithm to handle eviction. Each cache entry is
+assigned a priority when it gets read in. Regular data is given a priority
+of 1, while metadata is given a priority of 3. Each time the clock hand
+reaches an entry, it decrements the priority. Once the priority reaches
+0, it gets marked for eviction and flushed if necessary.
+
+The eviction process will continue moving the clock_hand until it finds an
+entry to evict. By assigning metadata a priority of 3, it will tend to stay in
+the cache approximately 3 times longer than regular data. Anytime a cache
+entry is accessed, its priority gets reset back to its original.
+
 >> C3: Describe your implementation of write-behind.
 
+Write-behind is implemented by flushing the cache only when a cache entry gets
+evicted, or when the 30 second, flush-all timer has expired.
+
+If an entry is marked for eviction, and it is dirty, the running thread must
+flush it before loading in the new cache entry. The cache_flush_block function
+gets called. This assumes the cache_lock is already held. If any other threads
+are currently handling the entry, this thread will wait until they finish.
+
+Once the block is not being used, the cache lock is released and it gets
+written back to disk. Because the handlers value is greater than zero, no
+other threads will be able to use this block until flushing is complete. The
+block_num is immediately replaced by the new block_num to avoid race conditions
+in search_cache.
+
+If 30 seconds has expired, a background thread will flush all blocks in the
+cache, regardless of how new they are. In this case, the blocks are not
+replaced with new ones, but they are marked as no longer dirty.
+
 >> C4: Describe your implementation of read-ahead.
+
+When a regular disk block is first accessed, the block that follows the first
+in memory is calculated. After the first block gets read in, the process
+submits a read-ahead order to the read-ahead background thread. This background
+thread maintains a list of all read-ahead orders and wakes up from a signal
+by the calling process whenever an order gets added to the list.
+
+The background thread then reads in the new block just like any other block
+that gets read into the cache. The only difference is we do not trigger a
+second read-ahead order if this call originated from a read-ahead order.
+
+The advantage of this method is such that processes often read subsequent
+blocks, so by loading in the next block in parallel with the thread, it will
+hopefully already be read into the cache by the time it is needed.
 
 ---- SYNCHRONIZATION ----
 
@@ -224,13 +313,56 @@ variable 'sector' repeatedly as elements of
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
+We used two techniques to help lock blocks.
+
+First, the cache has a global cache_lock which is held throughout all cache
+manipulations. This lock is only released during disk IO's. Each cache entry
+has a condition variable so that any process waiting on that particular entry
+may be signaled when it becomes available. Therefore, the global lock is also
+released when a process is waiting for a particular cache entry.
+
+Second, each cache entry keeps track of how many threads are currently handling
+the entry. This is designated in 'handlers'. If handlers is greater than 0,
+the process will have to wait for the other processess to finish before
+accessing the block itself. The handlers value is maintained during disk IO's
+and does not get decremented until we are done manipulating the cache entry.
+At this time, we also signal any other processes waiting on the cache entry.
+
+The eviction process must hold the cache lock and make sure that the block is
+not currently being handled by another process. In this way, we do not mark an
+active block for eviction. Nor can the block become active until eviction is
+complete due to the lock.
+
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
+
+The question above describes the general synchronization techniques used
+in caching. During eviction, the cache_lock is held preventing any new threads
+from starting a cache access, and if the block is currently active by a
+separate process, than it will not be evicted in the first place.
+
+The cache lock gets released right before the flush disk IO begins, but the
+handlers value is greater than 0, so no new processes will be able to access
+the block until eviction is complete.
 
 ---- RATIONALE ----
 
 >> C7: Describe a file workload likely to benefit from buffer caching,
 >> and workloads likely to benefit from read-ahead and write-behind.
+
+Any file workload that repeatedly uses the same blocks on disk will benefit
+from buffer caching. This could include writing to a text file, where you
+only have to write to cache.
+
+Workloads benefit from read-ahead if they have subsequent block accesses.
+Watching a movie could be one example where the next block of data is being
+read in before it is needed by the media player.
+
+Workloads benefit from write-behind if they are going to be making multiple
+changes. For example a text document where the author keeps writing changes
+to the same area of text. Each new write would not require a new disk IO,
+rather the changes would go to cache and eventually be saved back to disk,
+whether due to eviction or a flush timer.
 
 			   SURVEY QUESTIONS
 			   ================

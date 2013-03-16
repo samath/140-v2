@@ -200,7 +200,11 @@ cache_eviction (void)
   while(true)
   {
     struct cache_entry *ce = &cache[clock_hand];
-    if(ce->priority > 0)
+    if(ce->handlers > 0)
+    {
+      /* Do nothing */
+    }
+    else if(ce->priority > 0)
       ce->priority--;
     else
     {

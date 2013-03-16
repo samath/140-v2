@@ -96,19 +96,27 @@ be modified to support much larger files.
 
 
 Each file has a lock and some corresponding metadata stored along with 
-  its entry in the file-map, which can be accessed using an inode*.
+its entry in the file-map, which can be accessed using an inode*.
 
-In a call to inode_write_at, the thread acquires the corresponding lock,
-  and then checks if the write will require file extension.  If so, the 
-  lock is held for the duration of the write, until all blocks are allocated,
-  data is written, and the length & disk_inode are updated on disk.
+A call to inode_write_at and then checks if the write requires file extension.  
+If so, the process acquires the lock for the file stored in the file-map.
+The lock is held for the duration of the write, until all blocks are allocated,
+data is written, and the length & disk_inode are updated on disk.
 
-Once all readers have completed, the process checks once more that extension
-  is still necessary before proceeding to allocate blocks.
+Once all readers that require access beyond the end of the files have 
+completed, the process checks once more that extension
+is still necessary before proceeding to allocate blocks.
 
 At any given time, this scheme ensures that at most one process is extending
-  a file at the time.  Furthermore, no blocks are allocated until acquiring
-  a file-specific lock and checking that extension is necessary.
+a file at the time.  Furthermore, no blocks are allocated until acquiring
+a file-specific lock and checking that extension is necessary.
+
+The check 
+  if (offset + size >= inode->data.length)
+at the beginning of each call to inode_read_at or inode_write_at determines
+if there is any chance of the call sharing data with the newly extended 
+section of the file.  If not, there is no reason to use any additional 
+synchronization, and the read/write is allowed to proceed.
 
 
 >> A4: Suppose processes A and B both have file F open, both
@@ -119,12 +127,16 @@ At any given time, this scheme ensures that at most one process is extending
 >> code avoids this race.
 
 
-Using the same file-specific lock as in the previous problem, a process that
-  is extending a file will wait for all readers to complete.  Similarly, 
-  once extension has started, no process can read from the file until it has
-  completed.  This means that once the reading thread is able to reacquire 
-  the lock, the write has been propagated to disk (or the buffer cache), and 
-  so it is impossible to read incomplete data.
+Using the same file-specific lock as in the previous problem, each call to 
+read/write checks if there is a chance of running beyond the end of the file.
+Writes wait for all currently running reads that go beyond the end of the 
+file complete.
+Reads must acquire the file lock, which is held for the duration of the 
+extension process.
+This allows multiple processes that are reading at / beyond the end of the 
+file to occur concurrently with one another, but prevents them from reading 
+while an extension is occurring.
+
 
 
 >> A5: Explain how your synchronization design provides "fairness".
@@ -144,23 +156,24 @@ The struct tracks four counters:
       writers that are currently writing to disk.
 In general, as many readers or non-extending writers can share access to an
 inode at a time as necessary, but if a file is being extended no other
-actions are allowed.
+actions beyond the current of the file are allowed.
 
-In general, process that are reading or writing (without extending) a file 
+Processes that are reading beyond the boundary of a file 
 defer to another process that is attempting to extend the file. This means 
 that a file that is attempting to extend will never have to wait indefinitely; 
 any other process that calls read / write afterwards on the same file will 
 wait until the extension occurs.
 
 On the other hand, in order to ensure that a reader will never have to wait 
-indefinitely, both read and write count the number of calls to cond_wait that
+indefinitely, read counts the number of calls to cond_wait that
 are used to wait for an extending process.  After a set number of extensions 
 have been processed (currently set to 5), the process continues rather than
 deferring to extending processes.
 
 Since the code after the calls waiting on writers_waiting are not a critical 
 section, the synchronization scheme still works, because processes that 
-try to extend cannot run while reads and writes are occurring.
+try to extend cannot run while reads beyond the boundary 
+or extending writes are occurring.
 
 
 ---- RATIONALE ----

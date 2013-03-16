@@ -214,13 +214,42 @@ easily adjusted to optimize for these values.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct thread
+{
+    ...
+    block_sector_t wd;                 /* Working directory */
+    ...
+};
+
+wd specifies the sector of the working directory for the thread.
+
+struct inode_disk
+{
+  off_t length;
+  unsigned isdir;
+  unsigned magic;
+  block_sector_t blocks[TOTAL_BLOCKS];
+};
+
+isdir is a flag indicating if the inode is a directory
+
 ---- ALGORITHMS ----
 
 >> B2: Describe your code for traversing a user-specified path.  How
 >> do traversals of absolute and relative paths differ?
 
 This is implemented in dir_lookup_recursive, which updates the
-variable 'sector' repeatedly as elements of
+variable 'sector' to hold to the block sector of each subdirectory
+in the path and, finally, the target inode's sector. 
+
+To avoid modifying the path argument, dir_lookup_recursive copies
+it into a buffer and trims all trailing '/' by setting them to the
+null char. It then initailizes 'sector' by setting it equal to
+ROOT_DIR_SECTOR if the leading char is '/' (absolute path), and 
+the current thread's working directory sector otherwise (relative).
+It then repeatedly parses chunks of the path up to the next '/',
+performing a dir_lookup on the current 'sector' for the parsed chunk.
+On the last chunk, it returns the final sector.
 
 ---- SYNCHRONIZATION ----
 
@@ -229,15 +258,41 @@ variable 'sector' repeatedly as elements of
 >> should succeed, as should only one of two simultaneous attempts to
 >> create a file with the same name, and so on.
 
+We synchronize by creating a lock for each directory entry. Each of
+the dir_lookup, dir_lookup_recursive, dir_add, and dir_remove methods
+operates only having acquired the lock for the target directory (or
+the current subdirectory, in the case of dir_lookup_recursive). This
+makes all of the directory-modifying or reading modifications atomic
+with respect to one another.
+
+The lock itself is allocated lazily. When dir_lock is called for
+a directory, it checks the file map for a synch_status corresponding
+to that directory's inode. If there isn't a synch_status, the
+file map creates one (and the corresponding lock) for this and
+future synchronization of the directory. This raises the question
+of whether or not two threads calling dir_lock can simultaneously
+initialize two locks for the same dir; however, this is prevented
+due to hash accesses to the file map's synch_statuses being protected
+by a global lock on the file map itself.
+
 >> B5: Does your implementation allow a directory to be removed if it
 >> is open by a process or if it is in use as a process's current
 >> working directory?  If so, what happens to that process's future
 >> file system operations?  If not, how do you prevent it?
 
+No, we prevent directory removal if its inode has users other than
+the closing thread, or if it's sector is equal to a process's
+working directory.
+
 ---- RATIONALE ----
 
 >> B6: Explain why you chose to represent the current directory of a
 >> process the way you did.
+
+We used the block sector of the directory's inode for simplicity.
+The alternative would have been to store a struct dir or the
+correspondign struct inode in the thread, would necessitate extra
+closes and opens on both initailzation and the chdir syscall.
 
 			     BUFFER CACHE
 			     ============

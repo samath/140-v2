@@ -44,13 +44,11 @@ static void *uptr_valid (void *uptr);
 static void *str_valid (void *str);
 static void *buffer_valid (void *buffer, unsigned size);
 
-struct lock filesys_lock;
 
 void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  lock_init (&filesys_lock);
   lock_init (&cleanup_lock);
 }
 
@@ -255,26 +253,20 @@ static int syscall_wait (pid_t pid)
 
 static bool syscall_create (const char *file, unsigned initial_size)
 {
-  lock_acquire (&filesys_lock);
   bool retval = filesys_create (file, initial_size, false);
-  lock_release (&filesys_lock);
   return retval;
 }
 
 static bool syscall_remove (const char *file)
 {
-  lock_acquire (&filesys_lock);
   bool retval = filesys_remove (file);
-  lock_release (&filesys_lock);
   return retval;
 }
 
 static int syscall_open (const char *file)
 {
-  lock_acquire (&filesys_lock);
   struct file* fp = filesys_open (file);
   int retval = (fp) ? get_new_fd (fp) : -1;
-  lock_release (&filesys_lock);
   return retval;
 }
 

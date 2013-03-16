@@ -23,6 +23,8 @@
 
 #define NO_BLOCK ((block_sector_t) -1)
 
+#define MAX_WRITES 5
+
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long. */
 struct inode_disk
@@ -426,8 +428,11 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
   
   lock_acquire (&status->lock);
   /* Yield to writers. */
-  while (status->writers_waiting != 0) 
+  int wait_count = 0;
+  while (status->writers_waiting != 0 && wait_count < MAX_WRITES) {
+    wait_count++;
     cond_wait (&status->read_cond, &status->lock);
+  }
   /* Increment reader count. */
   status->readers_running++;
   lock_release (&status->lock);
@@ -529,8 +534,11 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   } else {
     /* If writer does not extend, requires same level of 
        synchronization as reader. */
-    while (status->writers_waiting != 0) 
+    int wait_count = 0;
+    while (status->writers_waiting != 0 && wait_count < MAX_WRITES) {
+      wait_count ++;
       cond_wait (&status->read_cond, &status->lock);
+    }
     status->readers_running++;
     lock_release (&status->lock);
   }

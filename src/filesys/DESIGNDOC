@@ -135,6 +135,32 @@ Using the same file-specific lock as in the previous problem, a process that
 >> from reading the file.
 
 
+All of the synchronization on file writes and reads is provided via the 
+file_synch_status struct that is linked to each inode though the file-map.
+
+The struct tracks four counters:
+    -Number of (extending) writers currently waiting to run
+    -Number of readers actively reading from disk or nonextending
+      writers that are currently writing to disk.
+In general, as many readers or non-extending writers can share access to an
+inode at a time as necessary, but if a file is being extended no other
+actions are allowed.
+
+In general, process that are reading or writing (without extending) a file 
+defer to another process that is attempting to extend the file. This means 
+that a file that is attempting to extend will never have to wait indefinitely; 
+any other process that calls read / write afterwards on the same file will 
+wait until the extension occurs.
+
+On the other hand, in order to ensure that a reader will never have to wait 
+indefinitely, both read and write count the number of calls to cond_wait that
+are used to wait for an extending process.  After a set number of extensions 
+have been processed (currently set to 5), the process continues rather than
+deferring to extending processes.
+
+Since the code after the calls waiting on writers_waiting are not a critical 
+section, the synchronization scheme still works, because processes that 
+try to extend cannot run while reads and writes are occurring.
 
 
 ---- RATIONALE ----
